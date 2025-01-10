@@ -21,7 +21,6 @@
 
 #include <imagine/config/defs.hh>
 #include <imagine/base/WindowConfig.hh>
-#include <imagine/base/glDefs.hh>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <optional>
@@ -29,14 +28,19 @@
 #include <type_traits>
 #include <span>
 
+namespace IG::GL
+{
+enum class API;
+struct Version;
+}
+
 namespace IG
 {
 
 class GLDisplay;
 class GLDrawable;
-class GLContextAttributes;
-class GLBufferConfigAttributes;
-class ErrorCode;
+struct GLContextAttributes;
+struct GLBufferConfigAttributes;
 
 using NativeGLDrawable = EGLSurface;
 using NativeGLContext = EGLContext;
@@ -131,7 +135,7 @@ public:
 
 	constexpr EGLManager() = default;
 	static const char *errorString(EGLint error);
-	static int makeRenderableType(GL::API, int majorVersion);
+	static int makeRenderableType(GL::API, GL::Version version);
 	explicit operator bool() const { return (bool)dpy; }
 
 protected:
@@ -150,10 +154,10 @@ protected:
 	bool supportsNoConfig{};
 	bool supportsNoError{};
 	bool supportsSrgbColorSpace{};
-	IG_UseMemberIf(Config::envIsLinux, bool, supportsTripleBufferSurfaces){};
-	IG_UseMemberIf(Config::envIsAndroid, PresentationTimeFunc, presentationTime){};
+	ConditionalMember<Config::envIsLinux, bool> supportsTripleBufferSurfaces{};
+	ConditionalMember<Config::envIsAndroid, PresentationTimeFunc> presentationTime{};
 
-	ErrorCode initDisplay(EGLDisplay);
+	bool initDisplay(EGLDisplay);
 	static std::optional<EGLConfig> chooseConfig(GLDisplay, int renderableType, GLBufferConfigAttributes, bool allowFallback = true);
 	static int chooseConfigs(GLDisplay, int renderableType, GLBufferConfigAttributes, std::span<EGLConfig>);
 	void logFeatures() const;

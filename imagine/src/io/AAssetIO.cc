@@ -40,9 +40,10 @@ static int asAAssetMode(IOAccessHint advice)
 	}
 }
 
-AAssetIO::AAssetIO(ApplicationContext ctx, CStringView name, AccessHint access, OpenFlags openFlags):
-	asset{AAssetManager_open(ctx.aAssetManager(), name, asAAssetMode(access))}
+AAssetIO::AAssetIO(ApplicationContext ctx, CStringView name, OpenFlags openFlags):
+	asset{AAssetManager_open(ctx.aAssetManager(), name, asAAssetMode(openFlags.accessHint))}
 {
+	auto access = openFlags.accessHint;
 	if(!asset) [[unlikely]]
 	{
 		logErr("error in AAssetManager_open(%s, %s)", name.data(), asString(access));
@@ -78,7 +79,7 @@ ssize_t AAssetIO::read(void *buff, size_t bytes, std::optional<off_t> offset)
 	}
 }
 
-ssize_t AAssetIO::write(const void *buff, size_t bytes, std::optional<off_t> offset)
+ssize_t AAssetIO::write(const void*, size_t, std::optional<off_t>)
 {
 	return -1;
 }
@@ -152,7 +153,7 @@ IOBuffer AAssetIO::releaseBuffer()
 	auto map = mapIO.map();
 	logMsg("releasing asset:%p with buffer:%p (%zu bytes)", asset.get(), map.data(), map.size());
 	return {map, {},
-		[asset = asset.release()](const uint8_t *ptr, size_t)
+		[asset = asset.release()](const uint8_t*, size_t)
 		{
 			logMsg("closing released asset:%p", asset);
 			AAsset_close(asset);

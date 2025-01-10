@@ -52,13 +52,12 @@ inline Mednafen::MDFN_Surface toMDFNSurface(IG::MutablePixmapView pix)
 	MDFN_PixelFormat fmt =
 		[&]()
 		{
-			switch(pix.format().id())
+			switch(pix.format().id)
 			{
-				case IG::PIXEL_BGRA8888: return MDFN_PixelFormat::ARGB32_8888;
-				case IG::PIXEL_RGBA8888: return MDFN_PixelFormat::ABGR32_8888;
-				case IG::PIXEL_RGB565: return MDFN_PixelFormat::RGB16_565;
-				default:
-					bug_unreachable("format id == %d", pix.format().id());
+				case IG::PixelFmtBGRA8888: return MDFN_PixelFormat::ARGB32_8888;
+				case IG::PixelFmtRGBA8888: return MDFN_PixelFormat::ABGR32_8888;
+				case IG::PixelFmtRGB565: return MDFN_PixelFormat::RGB16_565;
+				default: std::unreachable();
 			};
 		}();
 	return {pix.data(), uint32(pix.w()), uint32(pix.h()), uint32(pix.pitchPx()), fmt};
@@ -93,7 +92,7 @@ inline FS::FileString saveExtMDFN(std::string_view ext, bool skipMD5)
 	return str;
 }
 
-inline std::string savePathMDFN(const EmuApp &app, int id1, const char *cd1, bool skipMD5)
+inline std::string savePathMDFN(const EmuApp &app, [[maybe_unused]] int id1, const char *cd1, bool skipMD5)
 {
 	assert(cd1);
 	IG::FileString ext{'.'};
@@ -132,7 +131,7 @@ inline void loadContent(EmuSystem &sys, Mednafen::MDFNGI &mdfnGameInfo, IO &io, 
 	stream->setSize(size);
 	MDFNFILE fp(&NVFS, std::move(stream));
 	GameFile gf{&NVFS, std::string{sys.contentDirectory()}, {}, fp.stream(),
-		std::string{withoutDotExtension(sys.contentFileName())},
+		std::string{dotExtension(sys.contentFileName())},
 		std::string{sys.contentName()}};
 	mdfnGameInfo.Load(&gf);
 }
@@ -175,7 +174,7 @@ inline size_t stateSizeMDFN()
 	return s.size();
 }
 
-inline void readStateMDFN(EmuApp &app, std::span<uint8_t> buff)
+inline void readStateMDFN(std::span<uint8_t> buff)
 {
 	using namespace Mednafen;
 	if(hasGzipHeader(buff))

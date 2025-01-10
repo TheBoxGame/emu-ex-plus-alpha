@@ -19,7 +19,7 @@
 #include <imagine/gui/TableView.hh>
 #include <imagine/gui/MenuItem.hh>
 #include <imagine/util/container/ArrayList.hh>
-#include <imagine/bluetooth/sys.hh>
+#include <imagine/bluetooth/defs.hh>
 #include <array>
 
 namespace EmuEx
@@ -29,22 +29,19 @@ using namespace IG;
 class EmuVideoLayer;
 class EmuAudio;
 
-class MainMenuView : public TableView, public EmuAppHelper<MainMenuView>
+class MainMenuView : public TableView, public EmuAppHelper
 {
 public:
 	MainMenuView(ViewAttachParams attach, bool customMenu = false);
 	void onShow() final;
 	void loadFileBrowserItems();
 	void loadStandardItems();
-	void setAudioVideo(EmuAudio &audio, EmuVideoLayer &videoLayer);
 	virtual void reloadItems();
 
 	static constexpr int STANDARD_ITEMS = 15;
 	static constexpr int MAX_SYSTEM_ITEMS = 5;
 
 protected:
-	EmuAudio *audio{};
-	EmuVideoLayer *videoLayer{};
 	TextMenuItem loadGame;
 	TextMenuItem systemActions;
 	TextMenuItem recentGames;
@@ -53,11 +50,9 @@ protected:
 	TextMenuItem onScreenInputManager;
 	TextMenuItem inputManager;
 	TextMenuItem benchmark;
-	IG_UseMemberIf(Config::Input::BLUETOOTH, TextMenuItem, scanWiimotes);
-	IG_UseMemberIf(Config::Input::BLUETOOTH, TextMenuItem, bluetoothDisconnect);
-	#ifdef CONFIG_BLUETOOTH_SERVER
-	TextMenuItem acceptPS3ControllerConnection;
-	#endif
+	ConditionalMember<Config::Input::BLUETOOTH, TextMenuItem> scanWiimotes;
+	ConditionalMember<Config::Input::BLUETOOTH, TextMenuItem> bluetoothDisconnect;
+	ConditionalMember<Config::Bluetooth::server, TextMenuItem> acceptPS3ControllerConnection;
 	TextMenuItem about;
 	TextMenuItem exitApp;
 	StaticArrayList<MenuItem*, STANDARD_ITEMS + MAX_SYSTEM_ITEMS> item;

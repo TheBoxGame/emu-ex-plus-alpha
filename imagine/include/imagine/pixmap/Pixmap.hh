@@ -168,7 +168,7 @@ public:
 			auto destData = data();
 			auto destPitch = pitchBytes();
 			auto lineBytes = format().pixelBytes(pixmap.w());
-			for(auto i : iotaCount(pixmap.h()))
+			for([[maybe_unused]] auto i : iotaCount(pixmap.h()))
 			{
 				memcpy(destData, srcData, lineBytes);
 				srcData += pixmap.pitchBytes();
@@ -189,39 +189,39 @@ public:
 			write(pixmap);
 			return;
 		}
-		auto srcFormatID = pixmap.format().id();
-		switch(format().id())
+		auto srcFormatID = pixmap.format().id;
+		switch(format().id)
 		{
-			case PIXEL_RGBA8888:
+			case PixelFormatId::RGBA8888:
 				switch(srcFormatID)
 				{
-					case PIXEL_BGRA8888: return convertRGBA8888ToBGRA8888(*this, pixmap);
-					case PIXEL_RGB565: return convertRGB565ToRGBX8888(*this, pixmap);
-					case PIXEL_RGB888: return convertRGB888ToRGBX8888(*this, pixmap);
+					case PixelFormatId::BGRA8888: return convertRGBA8888ToBGRA8888(*this, pixmap);
+					case PixelFormatId::RGB565: return convertRGB565ToRGBX8888(*this, pixmap);
+					case PixelFormatId::RGB888: return convertRGB888ToRGBX8888(*this, pixmap);
 					default: return invalidFormatConversion(*this, pixmap);
 				}
-			case PIXEL_BGRA8888:
+			case PixelFormatId::BGRA8888:
 				switch(srcFormatID)
 				{
-					case PIXEL_RGBA8888: return convertRGBA8888ToBGRA8888(*this, pixmap);
-					case PIXEL_RGB565: return convertRGB565ToBGRX8888(*this, pixmap);
-					case PIXEL_RGB888: return convertRGB888ToBGRX8888(*this, pixmap);
+					case PixelFormatId::RGBA8888: return convertRGBA8888ToBGRA8888(*this, pixmap);
+					case PixelFormatId::RGB565: return convertRGB565ToBGRX8888(*this, pixmap);
+					case PixelFormatId::RGB888: return convertRGB888ToBGRX8888(*this, pixmap);
 					default: return invalidFormatConversion(*this, pixmap);
 				}
-			case PIXEL_RGB888:
+			case PixelFormatId::RGB888:
 				switch(srcFormatID)
 				{
-					case PIXEL_BGRA8888: return convertBGRX8888ToRGB888(*this, pixmap);
-					case PIXEL_RGBA8888: return convertRGBX8888ToRGB888(*this, pixmap);
-					case PIXEL_RGB565: return convertRGB565ToRGB888(*this, pixmap);
+					case PixelFormatId::BGRA8888: return convertBGRX8888ToRGB888(*this, pixmap);
+					case PixelFormatId::RGBA8888: return convertRGBX8888ToRGB888(*this, pixmap);
+					case PixelFormatId::RGB565: return convertRGB565ToRGB888(*this, pixmap);
 					default: return invalidFormatConversion(*this, pixmap);
 				}
-			case PIXEL_RGB565:
+			case PixelFormatId::RGB565:
 				switch(srcFormatID)
 				{
-					case PIXEL_RGBA8888: return convertRGBX8888ToRGB565(*this, pixmap);
-					case PIXEL_BGRA8888: return convertBGRX8888ToRGB565(*this, pixmap);
-					case PIXEL_RGB888: return convertRGB888ToRGB565(*this, pixmap);
+					case PixelFormatId::RGBA8888: return convertRGBX8888ToRGB565(*this, pixmap);
+					case PixelFormatId::BGRA8888: return convertBGRX8888ToRGB565(*this, pixmap);
+					case PixelFormatId::RGB888: return convertRGB888ToRGB565(*this, pixmap);
 					default: return invalidFormatConversion(*this, pixmap);
 				}
 			default:
@@ -245,7 +245,7 @@ public:
 		{
 			auto lineBytes = format().pixelBytes(size.x);
 			auto pitch = pitchBytes();
-			for(auto i : iotaCount(size.y))
+			for([[maybe_unused]] auto i : iotaCount(size.y))
 			{
 				std::fill_n(destData, lineBytes, 0);
 				destData += pitch;
@@ -284,7 +284,7 @@ public:
 		{
 			auto dataPitchPixels = pitchPx();
 			auto width = w();
-			for(auto y : iotaCount(h()))
+			for([[maybe_unused]] auto y : iotaCount(h()))
 			{
 				auto lineData = data;
 				transformNOverlapped(lineData, width, lineData,
@@ -352,7 +352,7 @@ protected:
 		{
 			auto srcPitchPixels = pixmap.pitchPx();
 			auto destPitchPixels = pitchPx();
-			for(auto h : iotaCount(pixmap.h()))
+			for([[maybe_unused]] auto h : iotaCount(pixmap.h()))
 			{
 				auto destLineData = destData;
 				auto srcLineData = srcData;
@@ -367,7 +367,7 @@ protected:
 		}
 	}
 
-	static void invalidFormatConversion(auto dest, auto src)
+	static void invalidFormatConversion([[maybe_unused]] auto dest, [[maybe_unused]] auto src)
 	{
 		bug_unreachable("unimplemented conversion:%s -> %s", src.format().name(), dest.format().name());
 	}

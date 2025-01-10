@@ -32,6 +32,7 @@
 #include <ss/vdp2.h>
 #include <mednafen-emuex/MDFNUtils.hh>
 #include <mednafen-emuex/ArchiveVFS.hh>
+#include <imagine/logger/logger.h>
 
 namespace MDFN_IEN_SS
 {
@@ -46,13 +47,13 @@ void LoadBackupRAM(IG::FileIO&);
 namespace EmuEx
 {
 
-constexpr SystemLogger log{"App"};
-
+constexpr SystemLogger log{"Saturnemu"};
 const char *EmuSystem::creditsViewStr = CREDITS_INFO_STRING "(c) 2011-2024\nRobert Broglia\nwww.explusalpha.com\n\nPortions (c) the\nMednafen Team\nmednafen.github.io";
 bool EmuSystem::handlesArchiveFiles = true;
 bool EmuSystem::hasResetModes = true;
 bool EmuSystem::hasRectangularPixels = true;
 bool EmuSystem::hasPALVideoSystem = true;
+bool EmuSystem::canRenderRGB565 = false;
 bool EmuSystem::stateSizeChangesAtRuntime = true;
 bool EmuApp::needsGlobalInstance = true;
 
@@ -93,7 +94,7 @@ void SaturnSystem::loadCartNV(EmuApp &app, FileIO &io)
 		return;
 	auto fullExt = saveExtMDFN(ext, noMD5InFilenames);
 	if(!io)
-		io = app.appContext().openFileUri(app.contentSaveFilePath(fullExt), IOAccessHint::Normal, OpenFlags::testCreateFile());
+		io = app.appContext().openFileUri(app.contentSaveFilePath(fullExt), OpenFlags::testCreateFile());
 	if(!io)
 		throw std::runtime_error(std::format("Error opening {}, please verify save path has write access", contentNameExt(fullExt)));
 	auto buff = io.buffer();
@@ -223,6 +224,8 @@ static std::vector<std::string> m3uFilenames(auto &io)
 	auto in = IStream<MapIO>{MapIO{io}};
 	for(std::string line; std::getline(in, line);)
 	{
+		if(line.back() == '\r') // ignore CR on Windows text files
+			line.pop_back();
 		filenames.emplace_back(std::move(line));
 		if(filenames.size() > 15)
 			break;
@@ -287,6 +290,10 @@ void SaturnSystem::loadContent(IO &io, EmuSystemCreateParams, OnLoadProgressDele
 		if(isM3U(contentFileName()))
 		{
 			filenames = m3uFilenames(io);
+			for(auto &fn : filenames)
+			{
+				fn = contentDirectory(fn);
+			}
 		}
 		else
 		{
@@ -418,7 +425,7 @@ double SaturnSystem::videoAspectRatioScale() const
 }
 
 size_t SaturnSystem::stateSize() { return currStateSize; }
-void SaturnSystem::readState(EmuApp &app, std::span<uint8_t> buff) { readStateMDFN(app, buff); }
+void SaturnSystem::readState(EmuApp&, std::span<uint8_t> buff) { readStateMDFN(buff); }
 size_t SaturnSystem::writeState(std::span<uint8_t> buff, SaveStateFlags flags) { return writeStateMDFN(buff, flags); }
 
 void EmuApp::onCustomizeNavView(EmuApp::NavView &view)

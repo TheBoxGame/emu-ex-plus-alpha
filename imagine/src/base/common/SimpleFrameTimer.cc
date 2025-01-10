@@ -26,7 +26,7 @@ constexpr SystemLogger log{"SimpleFrameTimer"};
 SimpleFrameTimer::SimpleFrameTimer(Screen &screen, EventLoop loop):
 	timer
 	{
-		"SimpleFrameTimer",
+		{.debugLabel = "SimpleFrameTimer", .eventLoop = loop},
 		[this, &screen]()
 		{
 			if(!requested)
@@ -48,7 +48,7 @@ SimpleFrameTimer::SimpleFrameTimer(Screen &screen, EventLoop loop):
 			return true;
 		}
 	},
-	eventLoop{loop} {}
+	interval{fromHz<Nanoseconds>(screen.frameRate())} {}
 
 void SimpleFrameTimer::scheduleVSync()
 {
@@ -63,7 +63,7 @@ void SimpleFrameTimer::scheduleVSync()
 		return;
 	}
 	assert(interval.count());
-	timer.runIn(Nanoseconds{1}, interval, eventLoop);
+	timer.runIn(Nanoseconds{1}, interval);
 }
 
 void SimpleFrameTimer::cancel()
@@ -78,8 +78,15 @@ void SimpleFrameTimer::setFrameRate(FrameRate rate)
 	log.info("set frame rate:{:g} (timer interval:{}ns)", rate, interval.count());
 	if(timer.isArmed())
 	{
-		timer.runIn(Nanoseconds{1}, interval, eventLoop);
+		timer.runIn(Nanoseconds{1}, interval);
 	}
 }
+
+void SimpleFrameTimer::setEventsOnThisThread(ApplicationContext)
+{
+	timer.setEventLoop({});
+}
+
+void NullFrameTimer::setEventsOnThisThread(ApplicationContext) {}
 
 }

@@ -16,13 +16,12 @@
 	along with Imagine.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <imagine/config/defs.hh>
-#include <imagine/gui/ViewAttachParams.hh>
 #include <imagine/gui/ViewManager.hh>
 #include <imagine/gfx/GfxText.hh>
 #include <imagine/util/DelegateFunc.hh>
 #include <imagine/util/concepts.hh>
 #include <imagine/util/utility.h>
-#include <vector>
+#include <imagine/util/variant.hh>
 #include <iterator>
 #include <memory>
 #include <type_traits>
@@ -35,8 +34,20 @@ class Event;
 namespace IG
 {
 
-class View;
-class TableView;
+template<class Func, class... Args>
+constexpr bool callAndAutoReturnTrue(Func& f, Args&&... args)
+{
+	if constexpr(VoidInvokeResult<Func, Args...>)
+	{
+		// auto-return true if the supplied function doesn't return a value
+		f(std::forward<Args>(args)...);
+		return true;
+	}
+	else
+	{
+		return f(std::forward<Args>(args)...);
+	}
+}
 
 template <class Item>
 class MenuItemSelectDelegate : public DelegateFunc<bool (Item &, View &, const Input::Event &)>
@@ -51,58 +62,44 @@ public:
 	constexpr MenuItemSelectDelegate(Callable<void, Item &, View &, const Input::Event &> auto &&f):
 		DelegateFuncBase
 		{
-			[=](Item &i, View &v, const Input::Event &e) { return callAndReturnBool(f, i, v, e); }
+			[=](Item& i, View& v, const Input::Event& e) { return callAndAutoReturnTrue(f, i, v, e); }
 		} {}
 
 	constexpr MenuItemSelectDelegate(std::invocable<Item &, const Input::Event &> auto &&f):
 		DelegateFuncBase
 		{
-			[=](Item &i, View &v, const Input::Event &e) { return callAndReturnBool(f, i, e); }
+			[=](Item& i, View&, const Input::Event& e) { return callAndAutoReturnTrue(f, i, e); }
 		} {}
 
 	constexpr MenuItemSelectDelegate(std::invocable<View &, const Input::Event &> auto &&f):
 		DelegateFuncBase
 		{
-			[=](Item &i, View &v, const Input::Event &e) { return callAndReturnBool(f, v, e); }
+			[=](Item&, View& v, const Input::Event& e) { return callAndAutoReturnTrue(f, v, e); }
 		} {}
 
 	constexpr MenuItemSelectDelegate(std::invocable<Item &> auto &&f):
 		DelegateFuncBase
 		{
-			[=](Item &i, View &v, const Input::Event &e) { return callAndReturnBool(f, i); }
+			[=](Item& i, View&, const Input::Event&) { return callAndAutoReturnTrue(f, i); }
 		} {}
 
 	constexpr MenuItemSelectDelegate(std::invocable<View &> auto &&f):
 		DelegateFuncBase
 		{
-			[=](Item &i, View &v, const Input::Event &e) { return callAndReturnBool(f, v); }
+			[=](Item&, View& v, const Input::Event&) { return callAndAutoReturnTrue(f, v); }
 		} {}
 
 	constexpr MenuItemSelectDelegate(std::invocable<const Input::Event &> auto &&f):
 		DelegateFuncBase
 		{
-			[=](Item &i, View &v, const Input::Event &e) { return callAndReturnBool(f, e); }
+			[=](Item&, View&, const Input::Event& e) { return callAndAutoReturnTrue(f, e); }
 		} {}
 
 	constexpr MenuItemSelectDelegate(std::invocable auto &&f):
 		DelegateFuncBase
 		{
-			[=](Item &i, View &v, const Input::Event &e) { return callAndReturnBool(f); }
+			[=](Item&, View&, const Input::Event&) { return callAndAutoReturnTrue(f); }
 		} {}
-
-	constexpr static bool callAndReturnBool(auto &f, auto &&...args)
-	{
-		if constexpr(VoidInvokeResult<decltype(f), decltype(args)...>)
-		{
-			// auto-return true if the supplied function doesn't return a value
-			f(IG_forward(args)...);
-			return true;
-		}
-		else
-		{
-			return f(IG_forward(args)...);
-		}
-	}
 };
 
 struct MenuItemFlags
@@ -125,9 +122,26 @@ struct MenuId
 	constexpr operator Type() const { return val; }
 };
 
+struct MenuItemDrawAttrs
+{
+	WindowRect rect{};
+	int xIndent{};
+	Gfx::Color color{};
+	_2DOrigin align{};
+};
+
+struct MenuItemI
+{
+	virtual ~MenuItemI() = default;
+	virtual void place() = 0;
+	virtual void prepareDraw() = 0;
+	virtual void draw(Gfx::RendererCommands&__restrict__, MenuItemDrawAttrs a = {}) const = 0;
+	virtual bool inputEvent(const Input::Event&, ViewInputEventParams p = {});
+};
+
 constexpr MenuId defaultMenuId{std::numeric_limits<MenuId::Type>::min()};
 
-class MenuItem
+class MenuItem: public MenuItemI
 {
 public:
 	struct Config
@@ -145,16 +159,13 @@ public:
 		id{conf.id},
 		t{attach.rendererTask, IG_forward(name), conf.face ?: &attach.viewManager.defaultFace} {}
 
-	MenuItem(MenuItem &&) = default;
-	MenuItem &operator=(MenuItem &&) = default;
-	virtual ~MenuItem() = default;
-	virtual void prepareDraw();
-	virtual void draw(Gfx::RendererCommands &__restrict__, int xPos, int yPos, int xSize, int ySize,
-		int xIndent, _2DOrigin align, Gfx::Color) const;
-	virtual void compile();
+	MenuItem(MenuItem&&) = default;
+	MenuItem &operator=(MenuItem&&) = default;
+	void prepareDraw() override;
+	void draw(Gfx::RendererCommands&__restrict__, MenuItemDrawAttrs) const override;
+	void place() override;
 	int ySize() const;
 	int xSize() const;
-	virtual bool select(View &, const Input::Event &) = 0;
 	constexpr bool selectable() const { return flags.selectable; }
 	constexpr void setSelectable(bool on) { flags.selectable = on; }
 	constexpr bool active() const { return flags.active; }
@@ -165,10 +176,10 @@ public:
 	void compile(UTF16Convertible auto &&name)
 	{
 		t.resetString(IG_forward(name));
-		compile();
+		place();
 	}
 
-	void setName(UTF16Convertible auto &&name, Gfx::GlyphTextureSet *face = nullptr)
+	void setName(UTF16Convertible auto &&name, Gfx::GlyphTextureSet *face = {})
 	{
 		t.resetString(IG_forward(name));
 		if(face)
@@ -199,7 +210,7 @@ public:
 	TextMenuItem(UTF16Convertible auto &&name, ViewAttachParams attach, Config conf):
 		MenuItem{IG_forward(name), attach, conf} {}
 
-	bool select(View &parent, const Input::Event &e) override { return onSelect.callCopySafe(*this, parent, e); }
+	bool inputEvent(const Input::Event& e, ViewInputEventParams p) override;
 };
 
 class TextHeadingMenuItem : public MenuItem
@@ -214,8 +225,6 @@ public:
 	{
 		setSelectable(false);
 	}
-
-	bool select(View &, const Input::Event &) override { return true; }
 };
 
 class BaseDualTextMenuItem : public MenuItem
@@ -229,13 +238,11 @@ public:
 
 	void set2ndName(UTF16Convertible auto &&name) { t2.resetString(IG_forward(name)); }
 	void set2ndName() { t2.resetString(); }
-	void compile() override;
-	void compile2nd();
+	void place() override;
+	void place2nd();
 	void prepareDraw() override;
-	void draw2ndText(Gfx::RendererCommands &, int xPos, int yPos, int xSize, int ySize,
-		int xIndent, _2DOrigin align, Gfx::Color) const;
-	void draw(Gfx::RendererCommands &__restrict__, int xPos, int yPos, int xSize, int ySize,
-		int xIndent, _2DOrigin align, Gfx::Color) const override;
+	void draw2ndText(Gfx::RendererCommands&__restrict__, MenuItemDrawAttrs) const;
+	void draw(Gfx::RendererCommands&__restrict__, MenuItemDrawAttrs) const override;
 
 protected:
 	Gfx::Text t2;
@@ -256,9 +263,8 @@ public:
 		BaseDualTextMenuItem{IG_forward(name), IG_forward(name2), attach, conf},
 		onSelect{onSelect} {}
 
-	void draw(Gfx::RendererCommands &__restrict__, int xPos, int yPos, int xSize, int ySize,
-		int xIndent, _2DOrigin align, Gfx::Color) const override;
-	bool select(View &, const Input::Event &) override;
+	void draw(Gfx::RendererCommands&__restrict__, MenuItemDrawAttrs) const override;
+	bool inputEvent(const Input::Event&, ViewInputEventParams) override;
 };
 
 
@@ -299,9 +305,8 @@ public:
 	bool setBoolValue(bool val);
 	bool flipBoolValue(View &view);
 	bool flipBoolValue();
-	void draw(Gfx::RendererCommands &__restrict__, int xPos, int yPos, int xSize, int ySize,
-		int xIndent, _2DOrigin align, Gfx::Color) const override;
-	bool select(View &, const Input::Event &) override;
+	void draw(Gfx::RendererCommands&__restrict__, MenuItemDrawAttrs) const override;
+	bool inputEvent(const Input::Event&, ViewInputEventParams) override;
 
 protected:
 	UTF16String offStr{u"Off"}, onStr{u"On"};
@@ -310,9 +315,18 @@ protected:
 class MultiChoiceMenuItem : public BaseDualTextMenuItem
 {
 public:
+	struct ItemsMessage {const MultiChoiceMenuItem& item;};
+	struct GetItemMessage {const MultiChoiceMenuItem& item; size_t idx;};
+	using ItemMessageVariant = std::variant<GetItemMessage, ItemsMessage>;
+	class ItemMessage: public ItemMessageVariant, public AddVisit
+	{
+	public:
+		using ItemMessageVariant::ItemMessageVariant;
+		using AddVisit::visit;
+	};
+	using ItemReply = std::variant<TextMenuItem*, size_t>;
+	using ItemSourceDelegate = MenuItemSourceDelegate<ItemMessage, ItemReply, ItemsMessage, GetItemMessage>;
 	using SelectDelegate = DelegateFunc<void (MultiChoiceMenuItem &, View &, const Input::Event &)>;
-	using ItemsDelegate = DelegateFunc<size_t (const MultiChoiceMenuItem &item)>;
-	using ItemDelegate = DelegateFunc<TextMenuItem& (const MultiChoiceMenuItem &item, size_t idx)>;
 	using SetDisplayStringDelegate = DelegateFunc<bool(size_t idx, Gfx::Text &text)>;
 
 	struct SelectedInit
@@ -340,18 +354,17 @@ public:
 	MultiChoiceMenuItem() = default;
 
 	MultiChoiceMenuItem(UTF16Convertible auto &&name, ViewAttachParams attach,
-		SelectedInit selected, ItemsDelegate items, ItemDelegate item, Config conf = Config::defaultConfig()):
+		SelectedInit selected, ItemSourceDelegate itemSrc, Config conf = Config::defaultConfig()):
 		BaseDualTextMenuItem{IG_forward(name), UTF16String{}, attach, toBaseConfig(conf)},
 		onSelect
 		{
 			conf.onSelect ? conf.onSelect :
-				[this](MultiChoiceMenuItem &item, View &view, const Input::Event &e)
+				[](MultiChoiceMenuItem &item, View &view, const Input::Event &e)
 				{
 					item.defaultOnSelect(view, e);
 				}
 		},
-		items_{items},
-		item_{item},
+		itemSrc{itemSrc},
 		onSetDisplayString{conf.onSetDisplayString},
 		selected_{selected.isId ? idxOfId(MenuId{selected.val}) : selected.val} {}
 
@@ -360,7 +373,7 @@ public:
 		MultiChoiceMenuItem
 		{
 			IG_forward(name), attach, selected,
-			itemsDelegate(IG_forward(item)), itemDelegate(IG_forward(item)), conf
+			ItemSourceDelegate{IG_forward(item)}, conf
 		}
 	{
 		if(conf.defaultItemOnSelect)
@@ -373,46 +386,30 @@ public:
 		}
 	}
 
-	void draw(Gfx::RendererCommands &__restrict__, int xPos, int yPos, int xSize, int ySize,
-		int xIndent, _2DOrigin align, Gfx::Color) const override;
-	void compile() override;
+	void draw(Gfx::RendererCommands&__restrict__, MenuItemDrawAttrs) const override;
+	void place() override;
 	int selected() const;
 	size_t items() const;
+	TextMenuItem& item(size_t idx) { return item(itemSrc, idx); }
 	bool setSelected(int idx, View &view);
 	bool setSelected(int idx);
 	bool setSelected(MenuId, View &view);
 	bool setSelected(MenuId);
 	int cycleSelected(int offset, View &view);
 	int cycleSelected(int offset);
-	bool select(View &, const Input::Event &) override;
+	bool inputEvent(const Input::Event&, ViewInputEventParams) override;
 	std::unique_ptr<TableView> makeTableView(ViewAttachParams attach);
 	void defaultOnSelect(View &, const Input::Event &);
 	void updateDisplayString();
 	int idxOfId(MenuId);
 
 protected:
-	ItemsDelegate items_;
-	ItemDelegate item_;
+	ItemSourceDelegate itemSrc;
 	SetDisplayStringDelegate onSetDisplayString;
 	int selected_{};
 
 	void setDisplayString(size_t idx);
-
-	static constexpr ItemsDelegate itemsDelegate(Container auto &&item)
-	{
-		if constexpr(std::is_rvalue_reference_v<decltype(item)>)
-			return [size = std::size(item)](const MultiChoiceMenuItem &) { return size; };
-		else
-			return [&item](const MultiChoiceMenuItem &) { return std::size(item); };
-	}
-
-	static constexpr ItemDelegate itemDelegate(Container auto &&item)
-	{
-		if constexpr(std::is_rvalue_reference_v<decltype(item)>)
-			return [item](const MultiChoiceMenuItem &, size_t idx) -> TextMenuItem& { return std::data(item)[idx]; };
-		else
-			return [&item](const MultiChoiceMenuItem &, size_t idx) -> TextMenuItem& { return std::data(item)[idx]; };
-	}
+	TextMenuItem& item(ItemSourceDelegate, size_t idx);
 };
 
 }

@@ -21,29 +21,30 @@
 #include <emuframework/AudioOptionView.hh>
 #include <emuframework/VideoOptionView.hh>
 #include <emuframework/SystemActionsView.hh>
+#include <emuframework/viewUtils.hh>
 #undef Debugger
 #include "MainApp.hh"
 #include <imagine/util/format.hh>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
 
-constexpr SystemLogger log{"2600Menus"};
+constexpr SystemLogger log{"2600.emu"};
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
-class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<CustomAudioOptionView>
+class CustomAudioOptionView : public AudioOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomAudioOptionView>::system;
+	using MainAppHelper::system;
 
 	TextMenuItem::SelectDelegate setResampleQualityDel()
 	{
 		return [this](TextMenuItem &item)
 		{
 			log.info("set resampling quality:{}", item.id.val);
-			system().optionAudioResampleQuality = item.id;
-			system().osystem.soundEmuEx().setResampleQuality((AudioSettings::ResamplingQuality)item.id.val);
+			system().optionAudioResampleQuality = AudioSettings::ResamplingQuality(item.id.val);
+			system().osystem.soundEmuEx().setResampleQuality(system().optionAudioResampleQuality);
 		};
 	}
 
@@ -57,21 +58,21 @@ class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<Custo
 	MultiChoiceMenuItem resampleQuality
 	{
 		"Resampling Quality", attachParams(),
-		MenuId{system().optionAudioResampleQuality.val},
+		MenuId{system().optionAudioResampleQuality.value()},
 		resampleQualityItem
 	};
 
 public:
-	CustomAudioOptionView(ViewAttachParams attach): AudioOptionView{attach, true}
+	CustomAudioOptionView(ViewAttachParams attach, EmuAudio& audio): AudioOptionView{attach, audio, true}
 	{
 		loadStockItems();
 		item.emplace_back(&resampleQuality);
 	}
 };
 
-class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<CustomVideoOptionView>
+class CustomVideoOptionView : public VideoOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomVideoOptionView>::system;
+	using MainAppHelper::system;
 
 	TextMenuItem tvPhosphorBlendItem[4]
 	{
@@ -84,7 +85,7 @@ class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<Custo
 	MultiChoiceMenuItem tvPhosphorBlend
 	{
 		"TV Phosphor Blending", attachParams(),
-		MenuId{system().optionTVPhosphorBlend.val},
+		MenuId{system().optionTVPhosphorBlend},
 		tvPhosphorBlendItem
 	};
 
@@ -98,7 +99,7 @@ class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<Custo
 	}
 
 public:
-	CustomVideoOptionView(ViewAttachParams attach): VideoOptionView{attach, true}
+	CustomVideoOptionView(ViewAttachParams attach, EmuVideoLayer &layer): VideoOptionView{attach, layer, true}
 	{
 		loadStockItems();
 		item.emplace_back(&systemSpecificHeading);
@@ -106,7 +107,7 @@ public:
 	}
 };
 
-class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionView>
+class ConsoleOptionView : public TableView, public MainAppHelper
 {
 	TextMenuItem tvPhosphorItem[3]
 	{
@@ -118,7 +119,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	MultiChoiceMenuItem tvPhosphor
 	{
 		"Simulate TV Phosphor", attachParams(),
-		MenuId{system().optionTVPhosphor.val},
+		MenuId{system().optionTVPhosphor},
 		tvPhosphorItem,
 		{
 			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
@@ -149,7 +150,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	MultiChoiceMenuItem videoSystem
 	{
 		"Video System", attachParams(),
-		MenuId{system().optionVideoSystem.val},
+		MenuId{system().optionVideoSystem},
 		videoSystemItem,
 		{
 			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
@@ -197,7 +198,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	MultiChoiceMenuItem inputPorts
 	{
 		"Input Ports", attachParams(),
-		MenuId{system().optionInputPort1.val},
+		MenuId{system().optionInputPort1.value()},
 		inputPortsItem,
 		{
 			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
@@ -218,7 +219,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 		return [this](TextMenuItem &item)
 		{
 			system().sessionOptionSet();
-			system().optionInputPort1 = item.id;
+			system().optionInputPort1 = Controller::Type(item.id.val);
 			if(system().osystem.hasConsole())
 			{
 				system().setControllerType(app(), system().osystem.console(), Controller::Type(item.id.val));
@@ -237,7 +238,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	MultiChoiceMenuItem aPaddleRegion
 	{
 		"Analog Paddle Region", attachParams(),
-		MenuId{system().optionPaddleAnalogRegion.val},
+		MenuId{system().optionPaddleAnalogRegion},
 		aPaddleRegionItem
 	};
 
@@ -256,10 +257,10 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 		{"Custom Value", attachParams(),
 			[this](const Input::Event &e)
 			{
-				app().pushAndShowNewCollectValueInputView<int>(attachParams(), e, "Input 1 to 20", "",
-					[this](EmuApp &app, auto val)
+				pushAndShowNewCollectValueInputView<int>(attachParams(), e, "Input 1 to 20", "",
+					[this](CollectTextInputView&, auto val)
 					{
-						if(system().optionPaddleDigitalSensitivity.isValidVal(val))
+						if(system().optionPaddleDigitalSensitivity.isValid(val))
 						{
 							setDPaddleSensitivity(val);
 							dPaddleSensitivity.setSelected(lastIndex(dPaddleSensitivityItem), *this);
@@ -268,7 +269,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 						}
 						else
 						{
-							app.postErrorMessage("Value not in range");
+							app().postErrorMessage("Value not in range");
 							return false;
 						}
 					});
@@ -280,12 +281,12 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	MultiChoiceMenuItem dPaddleSensitivity
 	{
 		"Digital Paddle Sensitivity", attachParams(),
-		MenuId{system().optionPaddleDigitalSensitivity.val},
+		MenuId{system().optionPaddleDigitalSensitivity},
 		dPaddleSensitivityItem,
 		{
 			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
 			{
-				t.resetString(std::format("{}", system().optionPaddleDigitalSensitivity.val));
+				t.resetString(std::format("{}", system().optionPaddleDigitalSensitivity.value()));
 				return true;
 			}
 		},
@@ -318,7 +319,7 @@ public:
 	{}
 };
 
-class VCSSwitchesView : public TableView, public MainAppHelper<VCSSwitchesView>
+class VCSSwitchesView : public TableView, public MainAppHelper
 {
 	BoolMenuItem diff1
 	{
@@ -418,8 +419,8 @@ std::unique_ptr<View> EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 {
 	switch(id)
 	{
-		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach);
-		case ViewID::VIDEO_OPTIONS: return std::make_unique<CustomVideoOptionView>(attach);
+		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach, audio);
+		case ViewID::VIDEO_OPTIONS: return std::make_unique<CustomVideoOptionView>(attach, videoLayer);
 		case ViewID::SYSTEM_ACTIONS: return std::make_unique<CustomSystemActionsView>(attach);
 		default: return nullptr;
 	}

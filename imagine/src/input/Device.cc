@@ -21,7 +21,7 @@ namespace IG::Input
 
 constexpr SystemLogger log{"InputDev"};
 
-static const char *keyButtonName(Key b)
+constexpr auto keyButtonName(Key b)
 {
 	switch(b)
 	{
@@ -239,7 +239,7 @@ static const char *keyButtonName(Key b)
 	return "";
 }
 
-static const char *ps3SysButtonName(Key b)
+constexpr const char* ps3SysButtonName([[maybe_unused]] Key b)
 {
 	#if defined __ANDROID__
 	switch(b)
@@ -259,7 +259,7 @@ static const char *ps3SysButtonName(Key b)
 }
 
 #ifdef __ANDROID__
-static const char *xperiaPlayButtonName(Key b)
+constexpr const char* xperiaPlayButtonName(Key b)
 {
 	switch(b)
 	{
@@ -271,7 +271,7 @@ static const char *xperiaPlayButtonName(Key b)
 	return nullptr;
 }
 
-static const char *ouyaButtonName(Key b)
+constexpr const char* ouyaButtonName(Key b)
 {
 	switch(b)
 	{
@@ -288,7 +288,7 @@ static const char *ouyaButtonName(Key b)
 #endif
 
 #ifdef CONFIG_MACHINE_PANDORA
-static const char *openPandoraButtonName(Key b)
+constexpr const char* openPandoraButtonName(Key b)
 {
 	switch(b)
 	{
@@ -315,7 +315,7 @@ void Device::setICadeMode(bool on)
 	{
 		if constexpr(requires {d.setICadeMode(on);})
 			d.setICadeMode(on);
-	}, *this);
+	});
 }
 
 bool Device::iCadeMode() const
@@ -326,7 +326,7 @@ bool Device::iCadeMode() const
 			return d.iCadeMode();
 		else
 			return false;
-	}, *this);
+	});
 }
 
 void Device::setJoystickAxesAsKeys(AxisSetId id, bool on)
@@ -361,7 +361,7 @@ const char *Device::keyName(Key k) const
 			return d.keyName(k);
 		else
 			return nullptr;
-	}, *this);
+	});
 	if(customName)
 		return customName;
 	switch(map())
@@ -369,7 +369,7 @@ const char *Device::keyName(Key k) const
 		default: return "";
 		case Map::SYSTEM:
 		{
-			auto subtypeButtonName = [](Subtype subtype, Key k) -> const char *
+			auto subtypeButtonName = [](Subtype subtype, [[maybe_unused]] Key k) -> const char *
 				{
 					switch(subtype)
 					{
@@ -418,9 +418,26 @@ std::string Device::keyString(Key k, KeyNameFlags flags) const
 	}
 }
 
+std::string Device::displayName() const
+{
+	return makeDisplayName(name(), enumId());
+}
+
+std::string Device::makeDisplayName(std::string_view name, int id)
+{
+	if(id)
+	{
+		return std::format("{} #{}", name, id + 1);
+	}
+	else
+	{
+		return std::string{name};
+	}
+}
+
 Map Device::map() const
 {
-	return visit([](auto &d){ return d.map_; }, *this);
+	return visit([](auto &d){ return d.map_; });
 }
 
 static DeviceSubtype gamepadSubtype(std::string_view name)

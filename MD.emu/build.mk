@@ -9,7 +9,12 @@ CPPFLAGS += -DLSB_FIRST \
  -DNO_SYSTEM_PICO
 # -DNO_SVP -DNO_SYSTEM_PBC
 
-CFLAGS_WARN += -Wno-missing-field-initializers
+CFLAGS_WARN += -Wno-missing-field-initializers -Wno-unused-parameter -Wno-unused-function
+
+ifeq ($(config_compiler),clang)
+ # needed for Z80CPU::makeFlagTables()
+ CFLAGS_CODEGEN += -fconstexpr-steps=10000000
+endif
 
 # Genesis Plus includes
 CPPFLAGS += -I$(projectPath)/src \

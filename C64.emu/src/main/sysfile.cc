@@ -22,6 +22,7 @@
 #include <imagine/fs/ArchiveFS.hh>
 #include <imagine/fs/FS.hh>
 #include <imagine/util/format.hh>
+#include <imagine/logger/logger.h>
 
 extern "C"
 {
@@ -33,7 +34,7 @@ extern "C"
 namespace EmuEx
 {
 
-constexpr SystemLogger log{"sysfile"};
+constexpr SystemLogger log{"C64.emu"};
 
 static int loadSysFile(Readable auto &file, const char *name, uint8_t *dest, int minsize, int maxsize)
 {
@@ -115,7 +116,7 @@ static ArchiveIO *archiveIOForSysFile(C64System &system, IG::CStringView archive
 static AssetIO assetIOForSysFile(IG::ApplicationContext ctx, std::string_view sysFileName, std::string_view subPath, char **complete_path_return)
 {
 	auto fullPath = FS::pathString(subPath, sysFileName);
-	auto file = ctx.openAsset(fullPath, IOAccessHint::All, {.test = true});
+	auto file = ctx.openAsset(fullPath, {.test = true, .accessHint = IOAccessHint::All});
 	if(!file)
 		return {};
 	if(complete_path_return)
@@ -342,7 +343,7 @@ CLINK int sysfile_load(const char *name, const char *subPath, uint8_t *dest, int
 		}
 		else
 		{
-			auto file = appContext.openFileUri(FS::uriString(basePath, subPath, name), IOAccessHint::All, {.test = true});
+			auto file = appContext.openFileUri(FS::uriString(basePath, subPath, name), {.test = true, .accessHint = IOAccessHint::All});
 			if(!file)
 				continue;
 			auto size = loadSysFile(file, name, dest, minsize, maxsize);

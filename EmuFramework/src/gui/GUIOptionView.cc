@@ -16,7 +16,8 @@
 #include <emuframework/GUIOptionView.hh>
 #include <emuframework/EmuApp.hh>
 #include <emuframework/EmuViewController.hh>
-#include "../EmuOptions.hh"
+#include <emuframework/EmuOptions.hh>
+#include <emuframework/viewUtils.hh>
 #include <imagine/base/ApplicationContext.hh>
 #include <imagine/gfx/Renderer.hh>
 #include <format>
@@ -55,21 +56,14 @@ GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
 		{"Custom Value", attach,
 			[this](const Input::Event &e)
 			{
-				app().pushAndShowNewCollectValueInputView<float>(attachParams(), e, "Input 2.0 to 10.0", "",
-					[this](EmuApp &app, auto val)
+				pushAndShowNewCollectValueRangeInputView<float, 2, 10>(attachParams(), e, "Input 2.0 to 10.0", "",
+					[this](CollectTextInputView &, auto val)
 					{
 						int scaledIntVal = val * 1000.0;
-						if(app.setFontSize(scaledIntVal))
-						{
-							fontSize.setSelected(MenuId{scaledIntVal}, *this);
-							dismissPrevious();
-							return true;
-						}
-						else
-						{
-							app.postErrorMessage("Value not in range");
-							return false;
-						}
+						app().setFontSize(scaledIntVal);
+						fontSize.setSelected(MenuId{scaledIntVal}, *this);
+						dismissPrevious();
+						return true;
 					});
 				return false;
 			}, {.id = defaultMenuId}
@@ -78,12 +72,12 @@ GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
 	fontSize
 	{
 		"Font Size", attach,
-		MenuId{app().fontSize()},
+		MenuId{app().fontSize},
 		fontSizeItem,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [this](auto, Gfx::Text& t)
 			{
-				t.resetString(std::format("{:g}", app().fontSize() / 1000.));
+				t.resetString(std::format("{:g}", app().fontSize / 1000.));
 				return true;
 			},
 			.defaultItemOnSelect = [this](TextMenuItem &item) { app().setFontSize(item.id); }
@@ -92,64 +86,64 @@ GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
 	notificationIcon
 	{
 		"Suspended App Icon", attach,
-		(bool)app().notificationIconOption().val,
+		app().showsNotificationIcon,
 		[this](BoolMenuItem &item)
 		{
-			app().notificationIconOption() = item.flipBoolValue(*this);
+			app().showsNotificationIcon = item.flipBoolValue(*this);
 		}
 	},
 	statusBarItem
 	{
-		{"Off",    attach, MenuItem::Config{.id = Tristate::OFF}},
-		{"In Emu", attach, MenuItem::Config{.id = Tristate::IN_EMU}},
-		{"On",     attach, MenuItem::Config{.id = Tristate::ON}}
+		{"Off",    attach, MenuItem::Config{.id = InEmuTristate::Off}},
+		{"In Emu", attach, MenuItem::Config{.id = InEmuTristate::InEmu}},
+		{"On",     attach, MenuItem::Config{.id = InEmuTristate::On}}
 	},
 	statusBar
 	{
 		"Hide Status Bar", attach,
-		MenuId{app().hideStatusBarMode()},
+		MenuId(InEmuTristate(app().hidesStatusBar.value())),
 		statusBarItem,
 		MultiChoiceMenuItem::Config
 		{
-			.defaultItemOnSelect = [this](TextMenuItem &item) { app().setHideStatusBarMode(Tristate(item.id.val)); }
+			.defaultItemOnSelect = [this](TextMenuItem &item) { app().setHideStatusBarMode(InEmuTristate(item.id.val)); }
 		},
 	},
 	lowProfileOSNavItem
 	{
-		{"Off",    attach, MenuItem::Config{.id = Tristate::OFF}},
-		{"In Emu", attach, MenuItem::Config{.id = Tristate::IN_EMU}},
-		{"On",     attach, MenuItem::Config{.id = Tristate::ON}}
+		{"Off",    attach, MenuItem::Config{.id = InEmuTristate::Off}},
+		{"In Emu", attach, MenuItem::Config{.id = InEmuTristate::InEmu}},
+		{"On",     attach, MenuItem::Config{.id = InEmuTristate::On}}
 	},
 	lowProfileOSNav
 	{
 		"Dim OS UI", attach,
-		MenuId{app().lowProfileOSNavMode()},
+		MenuId(InEmuTristate(app().lowProfileOSNav.value())),
 		lowProfileOSNavItem,
 		MultiChoiceMenuItem::Config
 		{
-			.defaultItemOnSelect = [this](TextMenuItem &item) { app().setLowProfileOSNavMode(Tristate(item.id.val)); }
+			.defaultItemOnSelect = [this](TextMenuItem &item) { app().setLowProfileOSNavMode(InEmuTristate(item.id.val)); }
 		},
 	},
 	hideOSNavItem
 	{
-		{"Off",    attach, MenuItem::Config{.id = Tristate::OFF}},
-		{"In Emu", attach, MenuItem::Config{.id = Tristate::IN_EMU}},
-		{"On",     attach, MenuItem::Config{.id = Tristate::ON}}
+		{"Off",    attach, MenuItem::Config{.id = InEmuTristate::Off}},
+		{"In Emu", attach, MenuItem::Config{.id = InEmuTristate::InEmu}},
+		{"On",     attach, MenuItem::Config{.id = InEmuTristate::On}}
 	},
 	hideOSNav
 	{
 		"Hide OS Navigation", attach,
-		MenuId{app().hideOSNavMode()},
+		MenuId(InEmuTristate(app().hidesOSNav.value())),
 		hideOSNavItem,
 		MultiChoiceMenuItem::Config
 		{
-			.defaultItemOnSelect = [this](TextMenuItem &item) { app().setHideOSNavMode(Tristate(item.id.val)); }
+			.defaultItemOnSelect = [this](TextMenuItem &item) { app().setHideOSNavMode(InEmuTristate(item.id.val)); }
 		},
 	},
 	idleDisplayPowerSave
 	{
 		"Allow Screen Timeout In Emulation", attach,
-		app().idleDisplayPowerSave(),
+		app().idleDisplayPowerSave,
 		[this](BoolMenuItem &item)
 		{
 			app().setIdleDisplayPowerSave(item.flipBoolValue(*this));
@@ -158,7 +152,7 @@ GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
 	navView
 	{
 		"Title Bar", attach,
-		app().showsTitleBar(),
+		app().showsTitleBar,
 		[this](BoolMenuItem &item)
 		{
 			app().setShowsTitleBar(item.flipBoolValue(*this));
@@ -188,7 +182,7 @@ GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
 	showBundledGames
 	{
 		"Show Bundled Content", attach,
-		app().showsBundledGames(),
+		app().showsBundledGames,
 		[this](BoolMenuItem &item)
 		{
 			app().setShowsBundledGames(item.flipBoolValue(*this));
@@ -197,7 +191,7 @@ GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
 	showBluetoothScan
 	{
 		"Show Bluetooth Menu Items", attach,
-		app().showsBluetoothScanItems(),
+		app().showsBluetoothScan,
 		[this](BoolMenuItem &item)
 		{
 			app().setShowsBluetoothScanItems(item.flipBoolValue(*this));
@@ -217,11 +211,11 @@ GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
 		"Max Recent Content Items", std::to_string(app().recentContent.maxRecentContent), attach,
 		[this](const Input::Event &e)
 		{
-			app().pushAndShowNewCollectValueRangeInputView<int, 1, 100>(attachParams(), e,
+			pushAndShowNewCollectValueRangeInputView<int, 1, 100>(attachParams(), e,
 				"Input 1 to 100", std::to_string(app().recentContent.maxRecentContent),
-				[this](EmuApp &app, auto val)
+				[this](CollectTextInputView &, auto val)
 				{
-					app.recentContent.maxRecentContent = val;
+					app().recentContent.maxRecentContent = val;
 					maxRecentContent.set2ndName(std::to_string(val));
 					return true;
 				});
@@ -242,7 +236,7 @@ GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
 	menuOrientation
 	{
 		"In Menu", attach,
-		MenuId{uint8_t(app().menuOrientation())},
+		MenuId{uint8_t(app().menuOrientation.value())},
 		menuOrientationItem,
 		{
 			.defaultItemOnSelect = [this](TextMenuItem &item) { app().setMenuOrientation(std::bit_cast<Orientations>(uint8_t(item.id))); }
@@ -259,7 +253,7 @@ GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
 	emuOrientation
 	{
 		"In Emu", attach,
-		MenuId{uint8_t(app().emuOrientation())},
+		MenuId{uint8_t(app().emuOrientation.value())},
 		emuOrientationItem,
 		{
 			.defaultItemOnSelect = [this](TextMenuItem &item) { app().setEmuOrientation(std::bit_cast<Orientations>(uint8_t(item.id))); }
@@ -279,11 +273,11 @@ GUIOptionView::GUIOptionView(ViewAttachParams attach, bool customMenu):
 		"Set Window Size", attach,
 		[this](const Input::Event &e)
 		{
-			app().pushAndShowNewCollectValuePairRangeInputView<int, 320, 8192, 240, 8192>(attachParams(), e,
+			pushAndShowNewCollectValuePairRangeInputView<int, 320, 8192, 240, 8192>(attachParams(), e,
 				"Input Width & Height", "",
-				[this](EmuApp &app, auto val)
+				[this](CollectTextInputView &, auto val)
 				{
-					app.emuWindow().setSize({val.first, val.second});
+					app().emuWindow().setSize({val.first, val.second});
 					return true;
 				});
 		}
@@ -306,7 +300,7 @@ void GUIOptionView::loadStockItems()
 	{
 		item.emplace_back(&pauseUnfocused);
 	}
-	if(!app().notificationIconOption().isConst)
+	if(app().canShowNotificationIcon(appContext()))
 	{
 		item.emplace_back(&notificationIcon);
 	}

@@ -54,16 +54,12 @@ bool Screen::containsOnFrame(OnFrameDelegate del) const
 
 void Screen::runOnFrameDelegates(SteadyClockTimePoint timestamp)
 {
+	postFrame();
 	auto params = makeFrameParams(timestamp);
 	onFrameDelegate.runAll([&](OnFrameDelegate del)
-		{
-			return del(params);
-		});
-	if(onFrameDelegate.size())
 	{
-		//logDMsg("posting next frame");
-		postFrame();
-	}
+		return del(params);
+	});
 }
 
 size_t Screen::onFrameDelegates() const
@@ -136,6 +132,12 @@ void Screen::unpostFrame()
 		return;
 	framePosted = false;
 	unpostFrameTimer();
+}
+
+bool Screen::shouldUpdateFrameTimer(const FrameTimer& frameTimer, bool newVariableFrameTimeValue)
+{
+	return (newVariableFrameTimeValue && !std::holds_alternative<SimpleFrameTimer>(frameTimer)) ||
+		(!newVariableFrameTimeValue && std::holds_alternative<SimpleFrameTimer>(frameTimer));
 }
 
 [[gnu::weak]] SteadyClockTime Screen::presentationDeadline() const { return {}; }

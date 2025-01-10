@@ -19,7 +19,7 @@
 #include <emuframework/EmuVideo.hh>
 #include <emuframework/EmuVideoLayer.hh>
 #include <emuframework/FilePicker.hh>
-#include "../EmuOptions.hh"
+#include <emuframework/EmuOptions.hh>
 #include "../InputDeviceData.hh"
 #include <imagine/gui/AlertView.hh>
 #include <imagine/gfx/RendererCommands.hh>
@@ -36,7 +36,7 @@ EmuInputView::EmuInputView(ViewAttachParams attach, VController &vCtrl, EmuVideo
 	vController{&vCtrl},
 	videoLayer{&videoLayer} {}
 
-void EmuInputView::draw(Gfx::RendererCommands &__restrict__ cmds)
+void EmuInputView::draw(Gfx::RendererCommands&__restrict__ cmds, ViewDrawParams) const
 {
 	vController->draw(cmds);
 }
@@ -49,6 +49,7 @@ void EmuInputView::place()
 void EmuInputView::resetInput()
 {
 	vController->resetInput();
+	vController->updateAltSpeedModeInput({}, false);
 	speedToggleActive = false;
 }
 
@@ -72,9 +73,9 @@ void EmuInputView::updateRunSpeed(AltSpeedMode mode)
 	app().setRunSpeed(speedToggleActive ? app().altSpeedAsDouble(mode) : 1.);
 }
 
-bool EmuInputView::inputEvent(const Input::Event &e)
+bool EmuInputView::inputEvent(const Input::Event& e, ViewInputEventParams)
 {
-	return visit(overloaded
+	return e.visit(overloaded
 	{
 		[&](const Input::MotionEvent &motionEv)
 		{
@@ -87,7 +88,6 @@ bool EmuInputView::inputEvent(const Input::Event &e)
 			if(vController->keyInput(keyEv))
 				return true;
 			auto &emuApp = app();
-			auto &sys = emuApp.system();
 			auto &devData = inputDevData(*keyEv.device());
 			const auto &actionTable = devData.actionTable;
 			if(!actionTable.size()) [[unlikely]]
@@ -138,7 +138,7 @@ bool EmuInputView::inputEvent(const Input::Event &e)
 				|| keyEv.isGamepad() // consume all gamepad events
 				|| devData.devConf.shouldHandleUnboundKeys;
 		}
-	}, e);
+	});
 }
 
 void EmuInputView::setSystemGestureExclusion(bool on)

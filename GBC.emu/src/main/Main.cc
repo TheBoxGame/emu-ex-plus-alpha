@@ -19,16 +19,18 @@
 #include <emuframework/OutSizeTracker.hh>
 #include <imagine/util/ScopeGuard.hh>
 #include <imagine/util/format.hh>
+#include <imagine/util/string.h>
 #include <imagine/fs/FS.hh>
 #include <imagine/io/IOStream.hh>
 #include <resample/resampler.h>
 #include <resample/resamplerinfo.h>
 #include <libgambatte/src/mem/cartridge.h>
-#include <main/Cheats.hh>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
 
+constexpr SystemLogger log{"GBC.emu"};
 const char *EmuSystem::creditsViewStr = CREDITS_INFO_STRING "(c) 2011-2024\nRobert Broglia\nwww.explusalpha.com\n\n\nPortions (c) the\nGambatte Team\ngambatte.sourceforge.net";
 bool EmuSystem::hasCheats = true;
 constexpr WSize lcdSize{gambatte::lcd_hres, gambatte::lcd_vres};
@@ -57,7 +59,7 @@ uint_least32_t GbcSystem::makeOutputColor(uint_least32_t rgb888) const
 	unsigned b = rgb888       & 0xFF;
 	unsigned g = rgb888 >>  8 & 0xFF;
 	unsigned r = rgb888 >> 16 & 0xFF;
-	auto desc = useBgrOrder ? IG::PIXEL_DESC_BGRA8888.nativeOrder() : IG::PIXEL_DESC_RGBA8888_NATIVE;
+	auto desc = useBgrOrder ? IG::PixelDescBGRA8888Native : IG::PixelDescRGBA8888Native;
 	return desc.build(r, g, b, 0u);
 }
 
@@ -67,9 +69,9 @@ void GbcSystem::applyGBPalette()
 	assert(idx < gbPalettes().size());
 	bool useBuiltin = optionUseBuiltinGBPalette && gameBuiltinPalette;
 	if(useBuiltin)
-		logMsg("using built-in game palette");
+		log.info("using built-in game palette");
 	else
-		logMsg("using palette index:%zu", idx);
+		log.info("using palette index:{}", idx);
 	const GBPalette &pal = useBuiltin ? *gameBuiltinPalette : gbPalettes()[idx];
 	for(auto i : iotaCount(4))
 		gbEmu.setDmgPaletteColor(0, i, makeOutputColor(pal.bg[i]));
@@ -79,7 +81,7 @@ void GbcSystem::applyGBPalette()
 		gbEmu.setDmgPaletteColor(2, i, makeOutputColor(pal.sp2[i]));
 }
 
-void GbcSystem::reset(EmuApp &app, ResetMode mode)
+void GbcSystem::reset(EmuApp& app, ResetMode)
 {
 	flushBackupMemory(app);
 	gbEmu.reset();
@@ -91,14 +93,14 @@ FS::FileString GbcSystem::stateFilename(int slot, std::string_view name) const
 	return IG::format<FS::FileString>("{}.0{}.gqs", name, saveSlotCharUpper(slot));
 }
 
-void GbcSystem::readState(EmuApp &app, std::span<uint8_t> buff)
+void GbcSystem::readState(EmuApp&, std::span<uint8_t> buff)
 {
 	IStream<MapIO> stream{buff};
 	if(!gbEmu.loadState(stream))
 		throw std::runtime_error("Invalid state data");
 }
 
-size_t GbcSystem::writeState(std::span<uint8_t> buff, SaveStateFlags flags)
+size_t GbcSystem::writeState(std::span<uint8_t> buff, SaveStateFlags)
 {
 	assert(saveStateSize == buff.size());
 	OStream<MapIO> stream{buff};
@@ -111,14 +113,14 @@ void GbcSystem::loadBackupMemory(EmuApp &app)
 	if(auto sram = gbEmu.srambank();
 		sram.size())
 	{
-		logMsg("loading sram");
+		log.info("loading sram");
 		app.setupStaticBackupMemoryFile(saveFileIO, ".sav", sram.size(), 0xFF);
 		saveFileIO.read(sram, 0);
 	}
 	if(auto timeOpt = gbEmu.rtcTime();
 		timeOpt)
 	{
-		logMsg("loading rtc");
+		log.info("loading rtc");
 		app.setupStaticBackupMemoryFile(rtcFileIO, ".rtc", 4);
 		auto rtcData = rtcFileIO.get<std::array<uint8_t, 4>>(0);
 		gbEmu.setRtcTime(rtcData[0] << 24 | rtcData[1] << 16 | rtcData[2] << 8 | rtcData[3]);
@@ -130,13 +132,13 @@ void GbcSystem::onFlushBackupMemory(EmuApp &, BackupMemoryDirtyFlags)
 	if(auto sram = gbEmu.srambank();
 		sram.size())
 	{
-		logMsg("saving sram");
+		log.info("saving sram");
 		saveFileIO.write(sram, 0);
 	}
 	if(auto timeOpt = gbEmu.rtcTime();
 		timeOpt)
 	{
-		logMsg("saving rtc");
+		log.info("saving rtc");
 		rtcFileIO.put(std::array<uint8_t, 4>
 			{
 				uint8_t(*timeOpt >> 24 & 0xFF),
@@ -179,10 +181,10 @@ void GbcSystem::loadContent(IO &io, EmuSystemCreateParams, OnLoadProgressDelegat
 	{
 		gameBuiltinPalette = findGbcTitlePal(gbEmu.romTitle().c_str());
 		if(gameBuiltinPalette)
-			logMsg("game %s has built-in palette", gbEmu.romTitle().c_str());
+			log.info("game {} has built-in palette", gbEmu.romTitle());
 		applyGBPalette();
 	}
-	readCheatFile(*this);
+	readCheatFile();
 	applyCheats();
 	saveStateSize = 0;
 	OStream<OutSizeTracker> stream{&saveStateSize};
@@ -192,11 +194,11 @@ void GbcSystem::loadContent(IO &io, EmuSystemCreateParams, OnLoadProgressDelegat
 bool GbcSystem::onVideoRenderFormatChange(EmuVideo &video, IG::PixelFormat fmt)
 {
 	video.setFormat({lcdSize, fmt});
-	auto isBgrOrder = fmt == IG::PIXEL_BGRA8888;
+	auto isBgrOrder = fmt == IG::PixelFmtBGRA8888;
 	if(isBgrOrder != useBgrOrder)
 	{
 		useBgrOrder = isBgrOrder;
-		IG::MutablePixmapView frameBufferPix{{lcdSize, IG::PIXEL_RGBA8888}, frameBuffer};
+		IG::MutablePixmapView frameBufferPix{{lcdSize, IG::PixelFmtRGBA8888}, frameBuffer};
 		frameBufferPix.transformInPlace(
 			[](uint32_t srcPixel) // swap red/blue values
 			{
@@ -215,7 +217,7 @@ void GbcSystem::configAudioRate(FrameTime outputFrameTime, int outputRate)
 	if(!resampler || optionAudioResampler != activeResampler
 		|| resampler->outRate() != outputRate  || resampler->inRate() != inputRate)
 	{
-		logMsg("setting up resampler %d for input rate %ldHz", (int)optionAudioResampler, inputRate);
+		log.info("setting up resampler {} for input rate {}Hz", optionAudioResampler.value(), inputRate);
 		resampler.reset(ResamplerInfo::get(optionAudioResampler).create(inputRate, outputRate, 35112 + 2064));
 		activeResampler = optionAudioResampler;
 	}
@@ -247,7 +249,7 @@ size_t GbcSystem::runUntilVideoFrame(gambatte::uint_least32_t *videoBuf, std::pt
 
 void GbcSystem::renderVideo(const EmuSystemTaskContext &taskCtx, EmuVideo &video)
 {
-	auto fmt = video.renderPixelFormat() == IG::PIXEL_FMT_BGRA8888 ? IG::PIXEL_FMT_BGRA8888 : IG::PIXEL_FMT_RGBA8888;
+	auto fmt = video.renderPixelFormat() == IG::PixelFmtBGRA8888 ? IG::PixelFmtBGRA8888 : IG::PixelFmtRGBA8888;
 	IG::PixmapView frameBufferPix{{lcdSize, fmt}, frameBuffer};
 	video.startFrameWithAltFormat(taskCtx, frameBufferPix);
 }
@@ -258,7 +260,7 @@ void GbcSystem::runFrame(EmuSystemTaskContext taskCtx, EmuVideo *video, EmuAudio
 	auto currentFrame = totalSamples / 35112;
 	if(totalFrames < currentFrame)
 	{
-		logMsg("unchanged video frame");
+		log.info("unchanged video frame");
 		if(video)
 			video->startUnchangedFrame(taskCtx);
 		return;
@@ -332,7 +334,7 @@ uint_least32_t gbcToRgb32(unsigned const bgr15, unsigned flags)
 		outG = (g * 3 + b) << 1;
 		outB = (r * 3 + g * 2 + b * 11) >> 1;
 	}
-	auto desc = (flags & EmuEx::COLOR_CONVERSION_BGR_BIT) ? IG::PIXEL_DESC_BGRA8888.nativeOrder() : IG::PIXEL_DESC_RGBA8888_NATIVE;
+	auto desc = (flags & EmuEx::COLOR_CONVERSION_BGR_BIT) ? IG::PixelDescBGRA8888Native : IG::PixelDescRGBA8888Native;
 	return desc.build(outR, outG, outB, 0u);
 }
 

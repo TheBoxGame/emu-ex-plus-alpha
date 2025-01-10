@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 
 struct ANativeActivity;
 struct AInputQueue;
@@ -80,20 +81,22 @@ public:
 	void endIdleByUserActivity(ApplicationContext);
 	void setSysUIStyle(JNIEnv *, jobject baseActivity, int32_t androidSDK, SystemUIStyleFlags);
 	bool hasDisplayCutout() const { return deviceFlags.displayCutout; }
+	bool hasSustainedPerformanceMode() const { return deviceFlags.hasSustainedPerformanceMode; }
 	bool hasFocus() const;
 	void addNotification(JNIEnv *, jobject baseActivity, const char *onShow, const char *title, const char *message);
 	void removePostedNotifications(JNIEnv *, jobject baseActivity);
 	void handleIntent(ApplicationContext);
-	bool openDocumentTreeIntent(JNIEnv *, jobject baseActivity, SystemDocumentPickerDelegate);
-	bool openDocumentIntent(JNIEnv *, jobject baseActivity, SystemDocumentPickerDelegate);
-	bool createDocumentIntent(JNIEnv *, jobject baseActivity, SystemDocumentPickerDelegate);
-	FrameTimer makeFrameTimer(Screen &);
+	bool openDocumentTreeIntent(JNIEnv*, ANativeActivity*, jobject baseActivity);
+	bool openDocumentIntent(JNIEnv*, ANativeActivity*, jobject baseActivity);
+	bool createDocumentIntent(JNIEnv*, ANativeActivity*, jobject baseActivity);
+	void emplaceFrameTimer(FrameTimer&, Screen&, bool useVariableTime = {});
 	bool requestPermission(ApplicationContext, Permission);
 	UniqueFileDescriptor openFileUriFd(JNIEnv *, jobject baseActivity, CStringView uri, OpenFlags oFlags = {}) const;
 	bool fileUriExists(JNIEnv *, jobject baseActivity, CStringView uri) const;
 	WallClockTimePoint fileUriLastWriteTime(JNIEnv *, jobject baseActivity, CStringView uri) const;
 	std::string fileUriFormatLastWriteTimeLocal(JNIEnv *, jobject baseActivity, CStringView uri) const;
 	FS::FileString fileUriDisplayName(JNIEnv *, jobject baseActivity, CStringView uri) const;
+	FS::file_type fileUriType(JNIEnv*, jobject baseActivity, CStringView uri) const;
 	bool removeFileUri(JNIEnv *, jobject baseActivity, CStringView uri, bool isDir) const;
 	bool renameFileUri(JNIEnv *, jobject baseActivity, CStringView oldUri, CStringView newUri) const;
 	bool createDirectoryUri(JNIEnv *, jobject baseActivity, CStringView uri) const;
@@ -125,7 +128,22 @@ private:
 		uint8_t
 		permanentMenuKey:1{},
 		displayCutout:1{},
-		handleRotationAnimation:1{};
+		handleRotationAnimation:1{},
+		hasSustainedPerformanceMode:1{};
+	};
+
+	struct InputDeviceListenerImpl
+	{
+		JNI::UniqueGlobalRef listenerHelper;
+		JNI::InstMethod<void()> jRegister;
+		JNI::InstMethod<void()> jUnregister;
+	};
+
+	struct INotifyImpl
+	{
+		Timer rescanTimer;
+		int fd = -1;
+		int watch = -1;
 	};
 
 	JNI::UniqueGlobalRef displayListenerHelper;
@@ -143,21 +161,21 @@ private:
 	JNI::InstMethod<jstring(jstring)> uriLastModified;
 	JNI::InstMethod<jlong(jstring)> uriLastModifiedTime;
 	JNI::InstMethod<jstring(jstring)> uriDisplayName;
+	JNI::InstMethod<jint(jstring)> uriFileType;
 	JNI::InstMethod<jboolean(jstring, jboolean)> deleteUri;
 	JNI::InstMethod<jboolean(jlong, jstring)> listUriFiles;
 	JNI::InstMethod<jboolean(jstring)> createDirUri;
 	JNI::InstMethod<jboolean(jstring, jstring)> renameUri;
 	JNI::ClassMethod<jstring(jlong)> jFormatDateTime;
-	SystemDocumentPickerDelegate onSystemDocumentPicker;
+	std::variant<InputDeviceListenerImpl, INotifyImpl> inputDeviceChangeImpl;
 	SystemOrientationChangedDelegate onSystemOrientationChanged;
-	Timer userActivityCallback{"userActivityCallback"};
+	Timer userActivityCallback;
 	using ProcessInputFunc = void (AndroidApplication::*)(AInputQueue *);
-	IG_UseMemberIf(Config::ENV_ANDROID_MIN_SDK < 12, ProcessInputFunc, processInput_){&AndroidApplication::processInputWithHasEvents};
+	ConditionalMember<Config::ENV_ANDROID_MIN_SDK < 12, ProcessInputFunc> processInput_{&AndroidApplication::processInputWithHasEvents};
 	AInputQueue *inputQueue{};
 	Input::Device *builtinKeyboardDev{};
 	Input::Device *virtualDev{};
 	Choreographer choreographer{};
-	pthread_key_t jEnvKey{};
 	uint32_t uiVisibilityFlags{};
 	int aHardKeyboardState{};
 	int aKeyboardType{};
@@ -171,16 +189,6 @@ public:
 	bool acceptsIntents{};
 
 private:
-	// InputDeviceListener-based device changes
-	JNI::UniqueGlobalRef inputDeviceListenerHelper{};
-	JNI::InstMethod<void()> jRegister{};
-	JNI::InstMethod<void()> jUnregister{};
-
-	// inotify-based device changes
-	std::optional<Timer> inputRescanCallback{};
-	int inputDevNotifyFd = -1;
-	int watch = -1;
-
 	void setHardKeyboardState(ApplicationContext ctx, int hardKeyboardState);
 	void initActivity(JNIEnv *, jobject baseActivity, jclass baseActivityClass, int32_t androidSDK);
 	void initInput(ApplicationContext ctx, JNIEnv *, jobject baseActivity, jclass baseActivityClass, int32_t androidSDK);
@@ -191,7 +199,7 @@ private:
 	void processInputWithGetEvent(AInputQueue *);
 	void processInputWithHasEvents(AInputQueue *);
 	void processInputCommon(AInputQueue *inputQueue, AInputEvent* event);
-	void handleDocumentIntentResult(const char *uri, const char *name);
+	void handleDocumentIntentResult(ApplicationContext, const char* uri, const char* name);
 };
 
 using ApplicationImpl = AndroidApplication;

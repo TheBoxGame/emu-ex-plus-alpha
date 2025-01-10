@@ -16,6 +16,7 @@
 #include <emuframework/TouchConfigView.hh>
 #include <emuframework/EmuApp.hh>
 #include <emuframework/AppKeyCode.hh>
+#include <emuframework/viewUtils.hh>
 #include <imagine/gui/AlertView.hh>
 #include <imagine/gui/TextTableView.hh>
 #include <imagine/gfx/RendererCommands.hh>
@@ -32,8 +33,6 @@
 namespace EmuEx
 {
 
-constexpr bool CAN_TURN_OFF_MENU_BTN = !Config::envIsIOS;
-
 constexpr const char *ctrlStateStr[]
 {
 	"Off", "On", "Hidden"
@@ -49,7 +48,7 @@ constexpr int touchCtrlExtraBtnSizeMenuVal[4]
 	0, 10, 20, 30
 };
 
-static void addCategories(EmuApp &app, VControllerElement &elem, auto &&addCategory)
+static void addCategories(EmuApp&, VControllerElement &elem, auto &&addCategory)
 {
 	if(elem.uiButtonGroup())
 	{
@@ -64,7 +63,7 @@ static void addCategories(EmuApp &app, VControllerElement &elem, auto &&addCateg
 	}
 }
 
-class DPadElementConfigView : public TableView, public EmuAppHelper<DPadElementConfigView>
+class DPadElementConfigView : public TableView, public EmuAppHelper
 {
 public:
 	DPadElementConfigView(ViewAttachParams attach, TouchConfigView &confView_, VController &vCtrl_, VControllerElement &elem_):
@@ -80,21 +79,14 @@ public:
 			{"Custom Value", attach,
 				[this](const Input::Event &e)
 				{
-					app().pushAndShowNewCollectValueInputView<float>(attachParams(), e, "Input 1.0 to 3.0", "",
-						[this](EmuApp &app, auto val)
+					pushAndShowNewCollectValueRangeInputView<float, 1, 3>(attachParams(), e, "Input 1.0 to 3.0", "",
+						[this](CollectTextInputView &, auto val)
 						{
 							int scaledIntVal = val * 100.0;
-							if(elem.dPad()->setDeadzone(renderer(), scaledIntVal, window()))
-							{
-								deadzone.setSelected(MenuId{scaledIntVal}, *this);
-								dismissPrevious();
-								return true;
-							}
-							else
-							{
-								app.postErrorMessage("Value not in range");
-								return false;
-							}
+							elem.dPad()->setDeadzone(renderer(), scaledIntVal, window());
+							deadzone.setSelected(MenuId{scaledIntVal}, *this);
+							dismissPrevious();
+							return true;
 						});
 					return false;
 				}, {.id = defaultMenuId}
@@ -106,7 +98,7 @@ public:
 			MenuId{elem.dPad()->deadzone()},
 			deadzoneItems,
 			{
-				.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+				.onSetDisplayString = [this](auto, Gfx::Text& t)
 				{
 					t.resetString(std::format("{:g}mm", elem.dPad()->deadzone() / 100.));
 					return true;
@@ -124,23 +116,16 @@ public:
 			{"Custom Value", attach,
 				[this](const Input::Event &e)
 				{
-					app().pushAndShowNewCollectValueInputView<float>(attachParams(), e, "Input 0 to 99.0", "",
-						[this](EmuApp &app, auto val)
+					pushAndShowNewCollectValueRangeInputView<float, 0, 99>(attachParams(), e, "Input 0 to 99.0", "",
+						[this](CollectTextInputView &, auto val)
 						{
 							val = 100. - val;
 							int scaledIntVal = val * 10.0;
 							val /= 100.;
-							if(elem.dPad()->setDiagonalSensitivity(renderer(), val))
-							{
-								diagonalSensitivity.setSelected(MenuId{scaledIntVal}, *this);
-								dismissPrevious();
-								return true;
-							}
-							else
-							{
-								app.postErrorMessage("Value not in range");
-								return false;
-							}
+							elem.dPad()->setDiagonalSensitivity(renderer(), val);
+							diagonalSensitivity.setSelected(MenuId{scaledIntVal}, *this);
+							dismissPrevious();
+							return true;
 						});
 					return false;
 				}, {.id = defaultMenuId}
@@ -152,7 +137,7 @@ public:
 			MenuId{elem.dPad()->diagonalSensitivity() * 1000.f},
 			diagonalSensitivityItems,
 			{
-				.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+				.onSetDisplayString = [this](auto, Gfx::Text& t)
 				{
 					t.resetString(std::format("{:g}%", 100.f - elem.dPad()->diagonalSensitivity() * 100.f));
 					return true;
@@ -229,7 +214,7 @@ public:
 			}
 		} {}
 
-	void draw(Gfx::RendererCommands &__restrict__ cmds) final
+	void draw(Gfx::RendererCommands &__restrict__ cmds, ViewDrawParams) const final
 	{
 		vCtrl.draw(cmds, elem, true);
 		TableView::draw(cmds);
@@ -260,15 +245,16 @@ private:
 	void assignAction(int idx, const Input::Event &e)
 	{
 		auto multiChoiceView = makeViewWithName<TextTableView>("Assign Action", 16);
-		addCategories(app(), elem, [&](const KeyCategory &cat)
+		auto &app = this->app();
+		addCategories(app, elem, [&](const KeyCategory &cat)
 		{
 			for(auto &k : cat.keys)
 			{
-				multiChoiceView->appendItem(app().inputManager.toString(k),
+				multiChoiceView->appendItem(app.inputManager.toString(k),
 					[this, k](TextMenuItem &item, View &parentView, const Input::Event &)
 					{
 						elem.dPad()->config.keys[item.id] = k;
-						actions[item.id].set2ndName(app().inputManager.toString(k));
+						actions[item.id].set2ndName(this->app().inputManager.toString(k));
 						parentView.dismiss();
 					}).id = idx;
 			}
@@ -277,7 +263,7 @@ private:
 	}
 };
 
-class ButtonElementConfigView : public TableView, public EmuAppHelper<ButtonElementConfigView>
+class ButtonElementConfigView : public TableView, public EmuAppHelper
 {
 public:
 	using OnChange = DelegateFunc<void()>;
@@ -294,16 +280,17 @@ public:
 			[this](const Input::Event &e)
 			{
 				auto multiChoiceView = makeViewWithName<TextTableView>("Assign Action", 16);
-				addCategories(app(), elem, [&](const KeyCategory &cat)
+				auto &app = this->app();
+				addCategories(app, elem, [&](const KeyCategory &cat)
 				{
 					for(auto &k : cat.keys)
 					{
-						multiChoiceView->appendItem(app().inputManager.toString(k),
+						multiChoiceView->appendItem(app.inputManager.toString(k),
 							[this, k](View &parentView)
 							{
 								btn.key = k;
 								btn.enabled = vCtrl.keyIsEnabled(k);
-								key.set2ndName(app().inputManager.toString(k));
+								key.set2ndName(this->app().inputManager.toString(k));
 								turbo.setBoolValue(k.flags.turbo, *this);
 								toggle.setBoolValue(k.flags.toggle, *this);
 								vCtrl.update(elem);
@@ -324,7 +311,7 @@ public:
 			{
 				btn.key.flags.turbo = item.flipBoolValue(*this);
 				key.set2ndName(app().inputManager.toString(btn.key));
-				key.compile2nd();
+				key.place2nd();
 				onChange.callSafe();
 			}
 		},
@@ -336,7 +323,7 @@ public:
 			{
 				btn.key.flags.toggle = item.flipBoolValue(*this);
 				key.set2ndName(app().inputManager.toString(btn.key));
-				key.compile2nd();
+				key.place2nd();
 				onChange.callSafe();
 			}
 		},
@@ -386,7 +373,7 @@ private:
 	}
 };
 
-class ButtonGroupElementConfigView : public TableView, public EmuAppHelper<ButtonGroupElementConfigView>
+class ButtonGroupElementConfigView : public TableView, public EmuAppHelper
 {
 public:
 	ButtonGroupElementConfigView(ViewAttachParams attach, TouchConfigView &confView_, VController &vCtrl_, VControllerElement &elem_):
@@ -443,8 +430,8 @@ public:
 			{"Custom Value", attach,
 				[this](const Input::Event &e)
 				{
-					app().pushAndShowNewCollectValueRangeInputView<int, 0, 8>(attachParams(), e, "Input 0 to 8", "",
-						[this](EmuApp &app, auto val)
+					pushAndShowNewCollectValueRangeInputView<int, 0, 8>(attachParams(), e, "Input 0 to 8", "",
+						[this](CollectTextInputView &, auto val)
 						{
 							elem.buttonGroup()->setSpacing(val, window());
 							vCtrl.place();
@@ -462,7 +449,7 @@ public:
 			MenuId{elem.buttonGroup() ? elem.buttonGroup()->spacing() : 0},
 			spaceItems,
 			{
-				.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+				.onSetDisplayString = [this](auto, Gfx::Text& t)
 				{
 					t.resetString(std::format("{}mm", elem.buttonGroup()->spacing()));
 					return true;
@@ -502,6 +489,20 @@ public:
 			{touchCtrlExtraBtnSizeMenuName[1], attach, {.id = touchCtrlExtraBtnSizeMenuVal[1]}},
 			{touchCtrlExtraBtnSizeMenuName[2], attach, {.id = touchCtrlExtraBtnSizeMenuVal[2]}},
 			{touchCtrlExtraBtnSizeMenuName[3], attach, {.id = touchCtrlExtraBtnSizeMenuVal[3]}},
+			{"Custom Value", attach, [this](const Input::Event &e)
+				{
+					pushAndShowNewCollectValueRangeInputView<int, 0, 30>(attachParams(), e, "Input 0 to 30", "",
+						[this](CollectTextInputView &, auto val)
+						{
+							elem.buttonGroup()->layout.xPadding = val;
+							vCtrl.place();
+							extraXSize.setSelected(MenuId{val}, *this);
+							dismissPrevious();
+							return true;
+						});
+					return false;
+				}, {.id = defaultMenuId}
+			}
 		},
 		extraXSize
 		{
@@ -509,6 +510,13 @@ public:
 			MenuId{elem.buttonGroup() ? elem.buttonGroup()->layout.xPadding : 0},
 			extraXSizeItems,
 			{
+				.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+				{
+					if(!idx)
+						return false;
+					t.resetString(std::format("{}%", elem.buttonGroup()->layout.xPadding));
+					return true;
+				},
 				.defaultItemOnSelect = [this](TextMenuItem &item)
 				{
 					elem.buttonGroup()->layout.xPadding = item.id;
@@ -522,6 +530,20 @@ public:
 			{touchCtrlExtraBtnSizeMenuName[1], attach, {.id = touchCtrlExtraBtnSizeMenuVal[1]}},
 			{touchCtrlExtraBtnSizeMenuName[2], attach, {.id = touchCtrlExtraBtnSizeMenuVal[2]}},
 			{touchCtrlExtraBtnSizeMenuName[3], attach, {.id = touchCtrlExtraBtnSizeMenuVal[3]}},
+			{"Custom Value", attach, [this](const Input::Event &e)
+				{
+					pushAndShowNewCollectValueRangeInputView<int, 0, 30>(attachParams(), e, "Input 0 to 30", "",
+						[this](CollectTextInputView &, auto val)
+						{
+							elem.buttonGroup()->layout.yPadding = val;
+							vCtrl.place();
+							extraYSize.setSelected(MenuId{val}, *this);
+							dismissPrevious();
+							return true;
+						});
+					return false;
+				}, {.id = defaultMenuId}
+			}
 		},
 		extraYSize
 		{
@@ -529,6 +551,13 @@ public:
 			MenuId{elem.buttonGroup() ? elem.buttonGroup()->layout.yPadding : 0},
 			extraYSizeItems,
 			{
+				.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+				{
+					if(!idx)
+						return false;
+					t.resetString(std::format("{}%", elem.buttonGroup()->layout.yPadding));
+					return true;
+				},
 				.defaultItemOnSelect = [this](TextMenuItem &item)
 				{
 					elem.buttonGroup()->layout.yPadding = item.id;
@@ -553,12 +582,13 @@ public:
 			[this](const Input::Event &e)
 			{
 				auto multiChoiceView = makeViewWithName<TextTableView>("Add Button", 16);
-				addCategories(app(), elem, [&](const KeyCategory &cat)
+				auto &app = this->app();
+				addCategories(app, elem, [&](const KeyCategory &cat)
 				{
 					for(auto &k : cat.keys)
 					{
-						multiChoiceView->appendItem(app().inputManager.toString(k),
-							[this, k](View &parentView, const Input::Event &e)
+						multiChoiceView->appendItem(app.inputManager.toString(k),
+							[this, k](View &parentView, const Input::Event&)
 							{
 								elem.add(k);
 								vCtrl.update(elem);
@@ -595,7 +625,7 @@ public:
 		reloadItems();
 	}
 
-	void draw(Gfx::RendererCommands &__restrict__ cmds) final
+	void draw(Gfx::RendererCommands &__restrict__ cmds, ViewDrawParams) const final
 	{
 		vCtrl.draw(cmds, elem, true);
 		TableView::draw(cmds);
@@ -618,9 +648,9 @@ private:
 	MultiChoiceMenuItem space;
 	TextMenuItem staggerItems[6];
 	MultiChoiceMenuItem stagger;
-	TextMenuItem extraXSizeItems[4];
+	TextMenuItem extraXSizeItems[5];
 	MultiChoiceMenuItem extraXSize;
-	TextMenuItem extraYSizeItems[4];
+	TextMenuItem extraYSizeItems[5];
 	MultiChoiceMenuItem extraYSize;
 	BoolMenuItem showBoundingArea;
 	TextMenuItem add;
@@ -665,7 +695,7 @@ private:
 	}
 };
 
-class AddNewButtonView : public TableView, public EmuAppHelper<AddNewButtonView>
+class AddNewButtonView : public TableView, public EmuAppHelper
 {
 public:
 	AddNewButtonView(ViewAttachParams attach, TouchConfigView &confView_, VController &vCtrl_):
@@ -677,14 +707,17 @@ public:
 		{
 			buttons.emplace_back(
 				c.name, attach,
-				[this, &c](const Input::Event &e){ add(c); });
+				[this, &c]{ add(c); });
 		}
 		buttons.emplace_back(
 			rightUIComponents.name, attach,
-			[this](const Input::Event &e){ add(rightUIComponents); });
+			[this]{ add(rightUIComponents); });
 		buttons.emplace_back(
 			leftUIComponents.name, attach,
-			[this](const Input::Event &e){ add(leftUIComponents); });
+			[this]{ add(leftUIComponents); });
+		buttons.emplace_back(
+			rewindUIComponents.name, attach,
+			[this]{ add(rewindUIComponents); });
 	}
 
 private:
@@ -701,7 +734,7 @@ private:
 	}
 };
 
-void TouchConfigView::draw(Gfx::RendererCommands &__restrict__ cmds)
+void TouchConfigView::draw(Gfx::RendererCommands &__restrict__ cmds, ViewDrawParams) const
 {
 	vController.draw(cmds, true);
 	TableView::draw(cmds);
@@ -720,7 +753,7 @@ void TouchConfigView::refreshTouchConfigMenu()
 	if(EmuSystem::maxPlayers > 1)
 		player.setSelected((int)vController.inputPlayer(), *this);
 	size.setSelected(MenuId{vController.buttonSize()}, *this);
-	if(app().vibrationManager().hasVibrator())
+	if(app().vibrationManager.hasVibrator())
 	{
 		vibrate.setBoolValue(vController.vibrateOnTouchInput(), *this);
 	}
@@ -783,21 +816,14 @@ TouchConfigView::TouchConfigView(ViewAttachParams attach, VController &vCtrl):
 		{"Custom Value", attach,
 			[this](const Input::Event &e)
 			{
-				app().pushAndShowNewCollectValueInputView<float>(attachParams(), e, "Input 3.0 to 30.0", "",
-					[this](EmuApp &app, auto val)
+				pushAndShowNewCollectValueRangeInputView<float, 3, 30>(attachParams(), e, "Input 3.0 to 30.0", "",
+					[this](CollectTextInputView &, auto val)
 					{
 						int scaledIntVal = val * 100.0;
-						if(vController.setButtonSize(scaledIntVal))
-						{
-							size.setSelected(MenuId{scaledIntVal}, *this);
-							dismissPrevious();
-							return true;
-						}
-						else
-						{
-							app.postErrorMessage("Value not in range");
-							return false;
-						}
+						vController.setButtonSize(scaledIntVal);
+						size.setSelected(MenuId{scaledIntVal}, *this);
+						dismissPrevious();
+						return true;
 					});
 				return false;
 			}, {.id = defaultMenuId}
@@ -809,7 +835,7 @@ TouchConfigView::TouchConfigView(ViewAttachParams attach, VController &vCtrl):
 		MenuId{vController.buttonSize()},
 		sizeItem,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [this](auto, Gfx::Text& t)
 			{
 				t.resetString(std::format("{:g}mm", vController.buttonSize() / 100.));
 				return true;
@@ -877,7 +903,7 @@ TouchConfigView::TouchConfigView(ViewAttachParams attach, VController &vCtrl):
 		{
 			if(!system().hasContent())
 				return;
-			pushAndShowModal(makeView<PlaceVideoView>(app().videoLayer(), vController), e);
+			pushAndShowModal(makeView<PlaceVideoView>(app().videoLayer, vController), e);
 		}
 	},
 	addButton
@@ -1001,12 +1027,12 @@ void TouchConfigView::reloadItems()
 			elem.name(app().inputManager), attachParams(),
 			[this, &elem](const Input::Event &e)
 			{
-				visit(overloaded
+				elem.visit(overloaded
 				{
 					[&](VControllerDPad &){ pushAndShow(makeView<DPadElementConfigView>(*this, vController, elem), e); },
 					[&](VControllerButtonGroup &){ pushAndShow(makeView<ButtonGroupElementConfigView>(*this, vController, elem), e); },
 					[](auto &){}
-				}, elem);
+				});
 			});
 		item.emplace_back(&i);
 	}
@@ -1017,11 +1043,11 @@ void TouchConfigView::reloadItems()
 			elem.name(app().inputManager), attachParams(),
 			[this, &elem](const Input::Event &e)
 			{
-				visit(overloaded
+				elem.visit(overloaded
 				{
 					[&](VControllerUIButtonGroup &){ pushAndShow(makeView<ButtonGroupElementConfigView>(*this, vController, elem), e); },
 					[](auto &){}
-				}, elem);
+				});
 			});
 		item.emplace_back(&i);
 	}
@@ -1031,7 +1057,7 @@ void TouchConfigView::reloadItems()
 	{
 		item.emplace_back(&allowButtonsPastContentBounds);
 	}
-	if(app().vibrationManager().hasVibrator())
+	if(app().vibrationManager.hasVibrator())
 	{
 		item.emplace_back(&vibrate);
 	}

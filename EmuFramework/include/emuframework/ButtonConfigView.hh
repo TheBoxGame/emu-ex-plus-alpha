@@ -32,7 +32,7 @@ class InputManagerView;
 class InputDeviceConfig;
 struct KeyCategory;
 
-class ButtonConfigSetView : public View, public EmuAppHelper<ButtonConfigSetView>
+class ButtonConfigSetView : public View, public EmuAppHelper
 {
 public:
 	using SetDelegate = DelegateFunc<void (const MappedKeys &)>;
@@ -40,8 +40,8 @@ public:
 	ButtonConfigSetView(ViewAttachParams attach, InputManagerView &rootIMView,
 		Input::Device &dev, std::string_view actionName, SetDelegate onSet);
 	void place() final;
-	bool inputEvent(const Input::Event &) final;
-	void draw(Gfx::RendererCommands &__restrict__) final;
+	bool inputEvent(const Input::Event&, ViewInputEventParams p = {}) final;
+	void draw(Gfx::RendererCommands&__restrict__, ViewDrawParams p = {}) const final;
 	void onAddedToController(ViewController *, const Input::Event &) final;
 
 private:
@@ -57,15 +57,15 @@ private:
 	MappedKeys pushedKeys;
 
 	void initPointerUI();
-	bool pointerUIIsInit();
+	bool pointerUIIsInit() const;
 	void finalize();
 };
 
-class ButtonConfigView : public TableView, public EmuAppHelper<ButtonConfigView>
+class ButtonConfigView : public TableView, public EmuAppHelper
 {
 public:
 	ButtonConfigView(ViewAttachParams attach, InputManagerView &rootIMView, const KeyCategory &cat, InputDeviceConfig &devConf);
-	bool inputEvent(const Input::Event &) final;
+	bool inputEvent(const Input::Event&, ViewInputEventParams p = {}) final;
 
 private:
 	InputManagerView &rootIMView;

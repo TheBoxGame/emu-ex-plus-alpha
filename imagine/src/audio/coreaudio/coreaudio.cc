@@ -37,6 +37,8 @@ CAOutputStream::CAOutputStream()
 		.componentSubType = kAudioUnitSubType_DefaultOutput,
 		#endif
 		.componentManufacturer = kAudioUnitManufacturer_Apple,
+		.componentFlags{},
+		.componentFlagsMask{}
 	};
 	AudioComponent defaultOutput = AudioComponentFindNext(nullptr, &defaultOutputDescription);
 	assert(defaultOutput);
@@ -48,7 +50,7 @@ CAOutputStream::CAOutputStream()
 	AURenderCallbackStruct renderCallbackProp
 	{
 		[](void *inRefCon, AudioUnitRenderActionFlags *ioActionFlags,
-			const AudioTimeStamp *inTimeStamp, UInt32 inBusNumber, UInt32 inNumberFrames, AudioBufferList *ioData) -> OSStatus
+			[[maybe_unused]] const AudioTimeStamp *inTimeStamp, [[maybe_unused]] UInt32 inBusNumber, UInt32 inNumberFrames, AudioBufferList *ioData) -> OSStatus
 		{
 			auto thisPtr = static_cast<CAOutputStream*>(inRefCon);
 			auto *buff = ioData->mBuffers[0].mData;
@@ -76,7 +78,7 @@ CAOutputStream::~CAOutputStream()
 	AudioComponentInstanceDispose(outputUnit);
 }
 
-IG::ErrorCode CAOutputStream::open(OutputStreamConfig config)
+StreamError CAOutputStream::open(OutputStreamConfig config)
 {
 	if(isOpen())
 	{
@@ -99,7 +101,7 @@ IG::ErrorCode CAOutputStream::open(OutputStreamConfig config)
 		err)
 	{
 		log.error("error:{} setting stream format", err);
-		return {EINVAL};
+		return StreamError::BadArgument;
 	}
 	onSamplesNeeded = config.onSamplesNeeded;
 	AudioUnitInitialize(outputUnit);

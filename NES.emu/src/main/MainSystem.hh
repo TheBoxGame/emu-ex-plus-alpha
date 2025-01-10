@@ -15,16 +15,30 @@
 	You should have received a copy of the GNU General Public License
 	along with NES.emu.  If not, see <http://www.gnu.org/licenses/> */
 
-#include <emuframework/Option.hh>
+#include <emuframework/EmuOptions.hh>
 #include <emuframework/EmuSystem.hh>
 #include <fceu/driver.h>
 #include <fceu/palette.h>
 #include <fceu/state.h>
+#include <fceu/cheat.h>
 
 namespace EmuEx
 {
 
 class EmuAudio;
+
+class Cheat: public CHEATF
+{
+public:
+	Cheat(std::string_view name): CHEATF{.name = std::string{name}} {}
+};
+
+class CheatCode: public CHEATCODE
+{
+public:
+	CheatCode(uint16 addr, uint8 val, int compare, int type):
+		CHEATCODE{.addr = addr, .val = val, .compare = compare, .type = type} {}
+};
 
 enum
 {
@@ -39,13 +53,13 @@ enum
 	CFGKEY_FF_DURING_FDS_ACCESS = 286, CFGKEY_CHEATS_PATH = 287,
 	CFGKEY_PATCHES_PATH = 288, CFGKEY_PALETTE_PATH = 289,
 	CFGKEY_OVERCLOCKING = 290, CFGKEY_OVERCLOCK_EXTRA_LINES = 291,
-	CFGKEY_OVERCLOCK_VBLANK_MULTIPLIER = 292,
+	CFGKEY_OVERCLOCK_VBLANK_MULTIPLIER = 292, CFGKEY_P2_START_AS_FC_MIC = 293,
 };
 
 constexpr int maxExtraLinesPerFrame = 30000;
 constexpr int maxVBlankMultiplier  = 16;
 
-constexpr bool isSupportedStartingLine(uint8_t line)
+constexpr bool isSupportedStartingLine(const auto &line)
 {
 	switch(line)
 	{
@@ -56,7 +70,7 @@ constexpr bool isSupportedStartingLine(uint8_t line)
 	return false;
 }
 
-constexpr bool isSupportedLineCount(uint8_t lines)
+constexpr bool isSupportedLineCount(const auto &lines)
 {
 	switch(lines)
 	{
@@ -74,7 +88,6 @@ public:
 	using PalArray = std::array<pal, 512>;
 
 	size_t saveStateSize{};
-	ESI nesInputPortDev[2]{SI_UNSET, SI_UNSET};
 	uint32 padData{};
 	uint32 zapperData[3]{};
 	uint8_t fcExtData{};
@@ -94,22 +107,31 @@ public:
 	std::string defaultPalettePath;
 	std::string fdsBiosPath;
 	std::string loaderErrorString;
-	bool fastForwardDuringFdsAccess = true;
+	Property<bool, CFGKEY_FF_DURING_FDS_ACCESS, PropertyDesc<bool>{.defaultValue = true}> fastForwardDuringFdsAccess;
 	bool fdsIsAccessing{};
-	Byte1Option optionFourScore{CFGKEY_FOUR_SCORE, 0};
-	SByte1Option optionInputPort1{CFGKEY_INPUT_PORT_1, -1, false, optionIsValidWithMinMax<-1, 2>};
-	SByte1Option optionInputPort2{CFGKEY_INPUT_PORT_2, -1, false, optionIsValidWithMinMax<-1, 2>};
-	Byte1Option optionVideoSystem{CFGKEY_VIDEO_SYSTEM, 0, false, optionIsValidWithMax<3>};
-	Byte1Option optionDefaultVideoSystem{CFGKEY_DEFAULT_VIDEO_SYSTEM, 0, false, optionIsValidWithMax<3>};
-	Byte1Option optionSpriteLimit{CFGKEY_SPRITE_LIMIT, 1};
-	Byte1Option optionSoundQuality{CFGKEY_SOUND_QUALITY, 0, false, optionIsValidWithMax<2>};
-	Byte1Option optionCompatibleFrameskip{CFGKEY_COMPATIBLE_FRAMESKIP, 0};
-	Byte1Option optionDefaultStartVideoLine{CFGKEY_START_VIDEO_LINE, 8, false, isSupportedStartingLine};
-	Byte1Option optionDefaultVisibleVideoLines{CFGKEY_VISIBLE_VIDEO_LINES, 224, false, isSupportedLineCount};
-	Byte1Option optionStartVideoLine{CFGKEY_START_VIDEO_LINE, 8, false, isSupportedStartingLine};
-	Byte1Option optionVisibleVideoLines{CFGKEY_VISIBLE_VIDEO_LINES, 224, false, isSupportedLineCount};
-	Byte1Option optionHorizontalVideoCrop{CFGKEY_HORIZONTAL_VIDEO_CROP, 0};
-	Byte1Option optionCorrectLineAspect{CFGKEY_CORRECT_LINE_ASPECT, 0};
+	Property<bool, CFGKEY_FOUR_SCORE> optionFourScore;
+	Property<ESI, CFGKEY_INPUT_PORT_1,
+		PropertyDesc<ESI, int8_t>{.defaultValue = SI_UNSET, .isValid = isValidWithMinMax<SI_UNSET, SI_COUNT>}> inputPort1;
+	Property<ESI, CFGKEY_INPUT_PORT_2,
+		PropertyDesc<ESI, int8_t>{.defaultValue = SI_UNSET, .isValid = isValidWithMinMax<SI_UNSET, SI_COUNT>}> inputPort2;
+	Property<uint8_t, CFGKEY_VIDEO_SYSTEM,
+		PropertyDesc<uint8_t>{.defaultValue = 0, .isValid = isValidWithMax<3>}> optionVideoSystem;
+	Property<uint8_t, CFGKEY_DEFAULT_VIDEO_SYSTEM,
+		PropertyDesc<uint8_t>{.defaultValue = 0, .isValid = isValidWithMax<3>}> optionDefaultVideoSystem;
+	Property<bool, CFGKEY_SPRITE_LIMIT, PropertyDesc<bool>{.defaultValue = true}> optionSpriteLimit;
+	Property<uint8_t, CFGKEY_SOUND_QUALITY,
+		PropertyDesc<uint8_t>{.defaultValue = 0, .isValid = isValidWithMax<2>}> optionSoundQuality;
+	Property<bool, CFGKEY_COMPATIBLE_FRAMESKIP> optionCompatibleFrameskip;
+	Property<uint8_t, CFGKEY_START_VIDEO_LINE,
+		PropertyDesc<uint8_t>{.defaultValue = 8, .isValid = isSupportedStartingLine}> optionDefaultStartVideoLine;
+	Property<uint8_t, CFGKEY_VISIBLE_VIDEO_LINES,
+		PropertyDesc<uint8_t>{.defaultValue = 224, .isValid = isSupportedLineCount}> optionDefaultVisibleVideoLines;
+	Property<uint8_t, CFGKEY_START_VIDEO_LINE,
+		PropertyDesc<uint8_t>{.defaultValue = 8, .isValid = isSupportedStartingLine}> optionStartVideoLine;
+	Property<uint8_t, CFGKEY_VISIBLE_VIDEO_LINES,
+		PropertyDesc<uint8_t>{.defaultValue = 224, .isValid = isSupportedLineCount}> optionVisibleVideoLines;
+	Property<bool, CFGKEY_HORIZONTAL_VIDEO_CROP> optionHorizontalVideoCrop;
+	Property<bool, CFGKEY_CORRECT_LINE_ASPECT> optionCorrectLineAspect;
 	static constexpr auto ntscFrameTime{fromSeconds<FrameTime>(16777215./ 1008307711.)}; // ~60.099Hz
 	static constexpr auto palFrameTime{fromSeconds<FrameTime>(16777215. / 838977920.)}; // ~50.00Hz
 
@@ -129,7 +151,7 @@ public:
 	size_t stateSize() { return saveStateSize; }
 	void readState(EmuApp &, std::span<uint8_t> buff);
 	size_t writeState(std::span<uint8_t> buff, SaveStateFlags);
-	bool readConfig(ConfigType, MapIO &, unsigned key, size_t readSize);
+	bool readConfig(ConfigType, MapIO &, unsigned key);
 	void writeConfig(ConfigType, FileIO &);
 	void reset(EmuApp &, ResetMode mode);
 	void clearInputBuffers(EmuInputView &view);
@@ -154,6 +176,17 @@ public:
 	double videoAspectRatioScale() const;
 	bool onVideoRenderFormatChange(EmuVideo &, IG::PixelFormat);
 	bool shouldFastForward() const;
+	Cheat* newCheat(EmuApp&, const char* name, CheatCodeDesc);
+	bool setCheatName(Cheat&, const char* name);
+	std::string_view cheatName(const Cheat&) const;
+	void setCheatEnabled(Cheat&, bool on);
+	bool isCheatEnabled(const Cheat&) const;
+	bool addCheatCode(EmuApp&, Cheat*&, CheatCodeDesc);
+	bool modifyCheatCode(EmuApp&, Cheat&, CheatCode&, CheatCodeDesc);
+	Cheat* removeCheatCode(Cheat&, CheatCode&);
+	bool removeCheat(Cheat&);
+	void forEachCheat(DelegateFunc<bool(Cheat&, std::string_view)>);
+	void forEachCheatCode(Cheat&, DelegateFunc<bool(CheatCode&, std::string_view)>);
 
 private:
 	void cacheUsingZapper();
@@ -173,3 +206,4 @@ struct FCEUGI;
 struct FCEUFILE;
 
 FCEUGI *FCEUI_LoadGameWithFileVirtual(FCEUFILE *fp, const char *name, int OverwriteVidMode, bool silent);
+extern bool replaceP2StartWithMicrophone;

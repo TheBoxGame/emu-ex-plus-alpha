@@ -35,13 +35,14 @@ long Lynx_GetSoundRate();
 namespace EmuEx
 {
 
+constexpr SystemLogger log{"Lynx.emu"};
 const char *EmuSystem::creditsViewStr = CREDITS_INFO_STRING "(c) 2011-2024\nRobert Broglia\nwww.explusalpha.com\n\nPortions (c) the\nMednafen Team\nmednafen.github.io";
 bool EmuApp::needsGlobalInstance = true;
 
 EmuSystem::NameFilterFunc EmuSystem::defaultFsFilter =
 	[](std::string_view name)
 	{
-		return endsWithAnyCaseless(name, ".lnx", ".o");
+		return endsWithAnyCaseless(name, ".lnx", ".lyx", ".o");
 	};
 
 using namespace Mednafen;
@@ -52,7 +53,7 @@ LynxApp::LynxApp(ApplicationInitParams initParams, ApplicationContext &ctx):
 const char *EmuSystem::shortSystemName() const { return "Lynx"; }
 const char *EmuSystem::systemName() const { return "Lynx"; }
 
-void LynxSystem::reset(EmuApp &, ResetMode mode)
+void LynxSystem::reset(EmuApp&, ResetMode)
 {
 	assert(hasContent());
 	MDFN_DoSimpleCommand(MDFN_MSC_RESET);
@@ -64,7 +65,7 @@ FS::FileString LynxSystem::stateFilename(int slot, std::string_view name) const
 }
 
 size_t LynxSystem::stateSize() { return stateSizeMDFN(); }
-void LynxSystem::readState(EmuApp &app, std::span<uint8_t> buff) { readStateMDFN(app, buff); }
+void LynxSystem::readState(EmuApp&, std::span<uint8_t> buff) { readStateMDFN(buff); }
 size_t LynxSystem::writeState(std::span<uint8_t> buff, SaveStateFlags flags) { return writeStateMDFN(buff, flags); }
 
 void LynxSystem::closeSystem()
@@ -103,7 +104,7 @@ void LynxSystem::configAudioRate(FrameTime outputFrameTime, int outputRate)
 	configuredHCount = Lynx_HCount();
 	if(Lynx_GetSoundRate() == mixRate)
 		return;
-	logMsg("set sound mix rate:%d", (int)mixRate);
+	log.info("set sound mix rate:{}", mixRate);
 	Lynx_SetSoundRate(mixRate);
 }
 

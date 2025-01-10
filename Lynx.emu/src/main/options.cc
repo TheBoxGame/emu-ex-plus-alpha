@@ -37,22 +37,22 @@ std::span<const AspectRatioInfo> LynxSystem::aspectRatioInfos()
 	return aspectRatioInfo;
 }
 
-bool LynxSystem::readConfig(ConfigType type, MapIO &io, unsigned key, size_t readSize)
+bool LynxSystem::readConfig(ConfigType type, MapIO &io, unsigned key)
 {
 	if(type == ConfigType::MAIN)
 	{
 		switch(key)
 		{
-			case CFGKEY_BIOS: return readStringOptionValue(io, readSize, biosPath);
-			case CFGKEY_LOWPASS_FILTER: return readOptionValue(io, readSize, lowpassFilter);
-			case CFGKEY_NO_MD5_FILENAMES: return readOptionValue(io, readSize, noMD5InFilenames);
+			case CFGKEY_BIOS: return readStringOptionValue(io, biosPath);
+			case CFGKEY_LOWPASS_FILTER: return readOptionValue(io, lowpassFilter);
+			case CFGKEY_NO_MD5_FILENAMES: return readOptionValue(io, noMD5InFilenames);
 		}
 	}
 	else if(type == ConfigType::SESSION)
 	{
 		switch(key)
 		{
-			case CFGKEY_LYNX_ROTATION: return readOptionValue(io, readSize, rotation, [](auto val)
+			case CFGKEY_LYNX_ROTATION: return readOptionValue(io, rotation, [](auto val)
 				{
 					return val <= lastEnum<LynxRotation>;
 				});
@@ -119,7 +119,6 @@ uint64 MDFN_GetSettingUI(const char *name_)
 int64 MDFN_GetSettingI(const char *name_)
 {
 	std::string_view name{name_};
-	auto &sys = static_cast<LynxSystem&>(gSystem());
 	if("filesys.state_comp_level" == name)
 		return 6;
 	bug_unreachable("unhandled settingI %s", name_);

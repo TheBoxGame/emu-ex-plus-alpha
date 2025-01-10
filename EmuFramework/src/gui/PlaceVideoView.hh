@@ -29,14 +29,14 @@ class VController;
 
 using namespace IG;
 
-class PlaceVideoView final: public View, public EmuAppHelper<PlaceVideoView>
+class PlaceVideoView final: public View, public EmuAppHelper
 {
 public:
 	PlaceVideoView(ViewAttachParams, EmuVideoLayer &, VController &);
 	~PlaceVideoView() final;
 	void place() final;
-	bool inputEvent(const Input::Event &e) final;
-	void draw(Gfx::RendererCommands &__restrict__) final;
+	bool inputEvent(const Input::Event& e, ViewInputEventParams p = {}) final;
+	void draw(Gfx::RendererCommands&__restrict__, ViewDrawParams p = {}) const final;
 	void onShow() final;
 
 private:

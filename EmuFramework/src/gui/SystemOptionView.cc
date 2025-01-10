@@ -15,7 +15,8 @@
 
 #include <emuframework/SystemOptionView.hh>
 #include <emuframework/EmuApp.hh>
-#include "../EmuOptions.hh"
+#include <emuframework/EmuOptions.hh>
+#include <emuframework/viewUtils.hh>
 #include "CPUAffinityView.hh"
 #include <imagine/base/ApplicationContext.hh>
 #include <imagine/gui/TextTableView.hh>
@@ -35,10 +36,10 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 		{"15min", attach, {.id = 15}},
 		{"Custom Value", attach, [this](const Input::Event &e)
 			{
-				app().pushAndShowNewCollectValueRangeInputView<int, 0, maxAutosaveSaveFreq.count()>(attachParams(), e, "Input 0 to 720", "",
-					[this](EmuApp &app, auto val)
+				pushAndShowNewCollectValueRangeInputView<int, 0, maxAutosaveSaveFreq.count()>(attachParams(), e, "Input 0 to 720", "",
+					[this](CollectTextInputView &, auto val)
 					{
-						app.autosaveManager().saveTimer.frequency = Minutes{val};
+						app().autosaveManager.saveTimer.frequency = Minutes{val};
 						autosaveTimer.setSelected(MenuId{val}, *this);
 						dismissPrevious();
 						return true;
@@ -49,18 +50,18 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 	},
 	autosaveTimer
 	{
-		"Autosave Timer", attach,
-		MenuId{app().autosaveManager().saveTimer.frequency.count()},
+		"Timer", attach,
+		MenuId{app().autosaveManager.saveTimer.frequency.count()},
 		autosaveTimerItem,
 		{
 			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
 			{
 				if(!idx)
 					return false;
-				t.resetString(std::format("{}", app().autosaveManager().saveTimer.frequency));
+				t.resetString(std::format("{}", app().autosaveManager.saveTimer.frequency));
 				return true;
 			},
-			.defaultItemOnSelect = [this](TextMenuItem &item) { app().autosaveManager().saveTimer.frequency = IG::Minutes{item.id}; }
+			.defaultItemOnSelect = [this](TextMenuItem &item) { app().autosaveManager.saveTimer.frequency = IG::Minutes{item.id}; }
 		},
 	},
 	autosaveLaunchItem
@@ -72,21 +73,21 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 	},
 	autosaveLaunch
 	{
-		"Autosave Launch Mode", attach,
-		MenuId{app().autosaveManager().autosaveLaunchMode},
+		"Launch Mode", attach,
+		MenuId{app().autosaveManager.autosaveLaunchMode},
 		autosaveLaunchItem,
 		{
-			.defaultItemOnSelect = [this](TextMenuItem &item) { app().autosaveManager().autosaveLaunchMode = AutosaveLaunchMode(item.id.val); }
+			.defaultItemOnSelect = [this](TextMenuItem &item) { app().autosaveManager.autosaveLaunchMode = AutosaveLaunchMode(item.id.val); }
 		},
 	},
 	autosaveContent
 	{
-		"Autosave Content", attach,
-		app().autosaveManager().saveOnlyBackupMemory,
+		"Content", attach,
+		app().autosaveManager.saveOnlyBackupMemory,
 		"State & Backup RAM", "Only Backup RAM",
 		[this](BoolMenuItem &item)
 		{
-			app().autosaveManager().saveOnlyBackupMemory = item.flipBoolValue(*this);
+			app().autosaveManager.saveOnlyBackupMemory = item.flipBoolValue(*this);
 		}
 	},
 	confirmOverwriteState
@@ -108,21 +109,14 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 		{"Custom Value", attach,
 			[this](const Input::Event &e)
 			{
-				app().pushAndShowNewCollectValueInputView<float>(attachParams(), e, "Input above 1.0 to 20.0", "",
-					[this](EmuApp &app, auto val)
+				pushAndShowNewCollectValueRangeInputView<float, 1, 20>(attachParams(), e, "Input above 1.0 to 20.0", "",
+					[this](CollectTextInputView &, auto val)
 					{
 						auto valAsInt = std::round(val * 100.f);
-						if(app.setAltSpeed(AltSpeedMode::fast, valAsInt))
-						{
-							fastModeSpeed.setSelected(MenuId{valAsInt}, *this);
-							dismissPrevious();
-							return true;
-						}
-						else
-						{
-							app.postErrorMessage("Value not in range");
-							return false;
-						}
+						app().setAltSpeed(AltSpeedMode::fast, valAsInt);
+						fastModeSpeed.setSelected(MenuId{valAsInt}, *this);
+						dismissPrevious();
+						return true;
 					});
 				return false;
 			}, {.id = defaultMenuId}
@@ -134,7 +128,7 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 		MenuId{app().altSpeed(AltSpeedMode::fast)},
 		fastModeSpeedItem,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [this](auto, Gfx::Text& t)
 			{
 				t.resetString(std::format("{:g}x", app().altSpeedAsDouble(AltSpeedMode::fast)));
 				return true;
@@ -149,11 +143,11 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 		{"Custom Value", attach,
 			[this](const Input::Event &e)
 			{
-				app().pushAndShowNewCollectValueInputView<float>(attachParams(), e, "Input 0.05 up to 1.0", "",
-					[this](EmuApp &app, auto val)
+				pushAndShowNewCollectValueInputView<float>(attachParams(), e, "Input 0.05 up to 1.0", "",
+					[this](CollectTextInputView &, auto val)
 					{
 						auto valAsInt = std::round(val * 100.f);
-						if(app.setAltSpeed(AltSpeedMode::slow, valAsInt))
+						if(app().setAltSpeed(AltSpeedMode::slow, valAsInt))
 						{
 							slowModeSpeed.setSelected(MenuId{valAsInt}, *this);
 							dismissPrevious();
@@ -161,7 +155,7 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 						}
 						else
 						{
-							app.postErrorMessage("Value not in range");
+							app().postErrorMessage("Value not in range");
 							return false;
 						}
 					});
@@ -175,7 +169,7 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 		MenuId{app().altSpeed(AltSpeedMode::slow)},
 		slowModeSpeedItem,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [this](auto, Gfx::Text& t)
 			{
 				t.resetString(std::format("{:g}x", app().altSpeedAsDouble(AltSpeedMode::slow)));
 				return true;
@@ -190,11 +184,11 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 		{"60", attach, {.id = 60}},
 		{"Custom Value", attach, [this](const Input::Event &e)
 			{
-				app().pushAndShowNewCollectValueRangeInputView<int, 0, 50000>(attachParams(), e,
+				pushAndShowNewCollectValueRangeInputView<int, 0, 50000>(attachParams(), e,
 					"Input 0 to 50000", std::to_string(app().rewindManager.maxStates),
-					[this](EmuApp &app, auto val)
+					[this](CollectTextInputView &, auto val)
 					{
-						app.rewindManager.updateMaxStates(val);
+						app().rewindManager.updateMaxStates(val);
 						rewindStates.setSelected(val, *this);
 						dismissPrevious();
 						return true;
@@ -205,11 +199,11 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 	},
 	rewindStates
 	{
-		"Rewind States", attach,
+		"States", attach,
 		MenuId{app().rewindManager.maxStates},
 		rewindStatesItem,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [this](auto, Gfx::Text& t)
 			{
 				t.resetString(std::format("{}", app().rewindManager.maxStates));
 				return true;
@@ -219,14 +213,14 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 	},
 	rewindTimeInterval
 	{
-		"Rewind State Interval (Seconds)", std::to_string(app().rewindManager.saveTimer.frequency.count()), attach,
+		"State Interval (Seconds)", std::to_string(app().rewindManager.saveTimer.frequency.count()), attach,
 		[this](const Input::Event &e)
 		{
-			app().pushAndShowNewCollectValueRangeInputView<int, 1, 60>(attachParams(), e,
+			pushAndShowNewCollectValueRangeInputView<int, 1, 60>(attachParams(), e,
 				"Input 1 to 60", std::to_string(app().rewindManager.saveTimer.frequency.count()),
-				[this](EmuApp &app, auto val)
+				[this](CollectTextInputView &, auto val)
 				{
-					app.rewindManager.saveTimer.frequency = Seconds{val};
+					app().rewindManager.saveTimer.frequency = Seconds{val};
 					rewindTimeInterval.set2ndName(std::to_string(val));
 					return true;
 				});
@@ -258,7 +252,10 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 		{
 			pushAndShow(makeView<CPUAffinityView>(appContext().cpuCount()), e);
 		}
-	}
+	},
+	autosaveHeading{"Autosave Options", attach},
+	rewindHeading{"Rewind Options", attach},
+	otherHeading{"Other Options", attach}
 {
 	if(!customMenu)
 	{
@@ -268,14 +265,17 @@ SystemOptionView::SystemOptionView(ViewAttachParams attach, bool customMenu):
 
 void SystemOptionView::loadStockItems()
 {
+	item.emplace_back(&autosaveHeading);
 	item.emplace_back(&autosaveLaunch);
 	item.emplace_back(&autosaveTimer);
 	item.emplace_back(&autosaveContent);
+	item.emplace_back(&rewindHeading);
+	item.emplace_back(&rewindStates);
+	item.emplace_back(&rewindTimeInterval);
+	item.emplace_back(&otherHeading);
 	item.emplace_back(&confirmOverwriteState);
 	item.emplace_back(&fastModeSpeed);
 	item.emplace_back(&slowModeSpeed);
-	item.emplace_back(&rewindStates);
-	item.emplace_back(&rewindTimeInterval);
 	if(used(performanceMode) && appContext().hasSustainedPerformanceMode())
 		item.emplace_back(&performanceMode);
 	if(used(noopThread))

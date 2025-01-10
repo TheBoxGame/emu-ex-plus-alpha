@@ -14,11 +14,13 @@ ifdef staticLibcxx
 endif
 
 ifeq ($(config_compiler),clang)
+ include $(buildSysPath)/clang.mk
  ifeq ($(origin CC), default)
   CC := clang
   CXX := clang++
+  CXXFLAGS_LANG += -stdlib=libc++
+  LDFLAGS_SYSTEM += -stdlib=libc++
  endif
- include $(buildSysPath)/clang.mk
 else
  include $(buildSysPath)/gcc.mk
 endif
@@ -27,11 +29,7 @@ CPPFLAGS += -D_GNU_SOURCE
 ifndef PROFILE
  OPTIMIZE_LDFLAGS = -s
 endif
-LDLIBS += -lm
+LDLIBS += -lpthread -lm
 LDFLAGS_SYSTEM += -Wl,-O3,--gc-sections,--as-needed,--compress-debug-sections=$(COMPRESS_DEBUG_SECTIONS),--icf=all
 
-ifneq ($(ARCH),arm)
- LDFLAGS_SYSTEM += -fuse-ld=mold
-else
- LDFLAGS_SYSTEM += -fuse-ld=gold
-endif
+LDFLAGS_SYSTEM += -fuse-ld=mold

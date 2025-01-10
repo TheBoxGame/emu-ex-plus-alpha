@@ -16,7 +16,6 @@
 #define LOGTAG "Wiimote"
 #include <imagine/bluetooth/Wiimote.hh>
 #include <imagine/base/Application.hh>
-#include <imagine/base/Error.hh>
 #include <imagine/input/bluetoothInputDefs.hh>
 #include <imagine/logger/logger.h>
 #include <imagine/time/Time.hh>
@@ -186,49 +185,50 @@ const char *WiimoteExtDevice::keyName(Input::Key k) const
 	return wiiKeyName(k, map_);
 }
 
-IG::ErrorCode Wiimote::open(BluetoothAdapter &adapter, Input::Device &dev)
+bool Wiimote::open(BluetoothAdapter& adapter, Input::Device& dev)
 {
 	logMsg("opening Wiimote");
-	ctlSock.onData() = intSock.onData() =
+	btaPtr = &adapter;
+	ctlSock.onData = intSock.onData =
 		[&dev](const char *packet, size_t size)
 		{
 			return getAs<Wiimote>(dev).dataHandler(dev, packet, size);
 		};
-	ctlSock.onStatus() = intSock.onStatus() =
-		[&dev](BluetoothSocket &sock, uint32_t status)
+	ctlSock.onStatus = intSock.onStatus =
+		[&dev](BluetoothSocket &sock, BluetoothSocketState status)
 		{
 			return getAs<Wiimote>(dev).statusHandler(dev, sock, status);
 		};
-	if(ctlSock.openL2cap(adapter, addr, 17))
+	if(ctlSock.openL2cap(adapter, addr, 17).code())
 	{
 		logErr("error opening control socket");
-		return {EIO};
+		return false;
 	}
-	return {};
+	return true;
 }
 
-uint32_t Wiimote::statusHandler(Input::Device &dev, BluetoothSocket &sock, uint32_t status)
+uint32_t Wiimote::statusHandler(Input::Device &dev, BluetoothSocket &sock, BluetoothSocketState status)
 {
-	if(status == BluetoothSocket::STATUS_OPENED && &sock == (BluetoothSocket*)&ctlSock)
+	if(status == BluetoothSocketState::Opened && &sock == (BluetoothSocket*)&ctlSock)
 	{
 		logMsg("opened Wiimote control socket, opening interrupt socket");
-		intSock.openL2cap(*BluetoothAdapter::defaultAdapter(ctx), addr, 19);
+		intSock.openL2cap(*btaPtr, addr, 19);
 		return 0; // don't add ctlSock to event loop
 	}
-	else if(status == BluetoothSocket::STATUS_OPENED && &sock == (BluetoothSocket*)&intSock)
+	else if(status == BluetoothSocketState::Opened && &sock == (BluetoothSocket*)&intSock)
 	{
 		logMsg("Wiimote opened successfully");
 		ctx.application().bluetoothInputDeviceStatus(ctx, dev, status);
 		setLEDs(enumId_);
 		requestStatus();
-		return BluetoothSocket::OPEN_USAGE_READ_EVENTS;
+		return 1;
 	}
-	else if(status == BluetoothSocket::STATUS_CONNECT_ERROR)
+	else if(status == BluetoothSocketState::ConnectError)
 	{
 		logErr("Wiimote connection error");
 		ctx.application().bluetoothInputDeviceStatus(ctx, dev, status);
 	}
-	else if(status == BluetoothSocket::STATUS_READ_ERROR)
+	else if(status == BluetoothSocketState::ReadError)
 	{
 		logErr("Wiimote read error");
 		ctx.application().bluetoothInputDeviceStatus(ctx, dev, status);
@@ -302,7 +302,7 @@ void Wiimote::sendDataModeByExtension()
 	}
 }
 
-bool Wiimote::dataHandler(Input::Device &dev, const char *packetPtr, size_t size)
+bool Wiimote::dataHandler(Input::Device& dev, const char* packetPtr, size_t)
 {
 	using namespace IG::Input;
 	auto packet = (const uint8_t*)packetPtr;
@@ -395,10 +395,10 @@ bool Wiimote::dataHandler(Input::Device &dev, const char *packetPtr, size_t size
 						std::ranges::fill(prevExtData, 0xFF);
 						static constexpr float axisClassicLScaler = 1./31.;
 						static constexpr float axisClassicRScaler = 1./15.;
-						axis[0] = {Map::WII_CC, Input::AxisId::X, axisClassicLScaler};
-						axis[1] = {Map::WII_CC, Input::AxisId::Y, axisClassicLScaler};
-						axis[2] = {Map::WII_CC, Input::AxisId::Z, axisClassicRScaler};
-						axis[3] = {Map::WII_CC, Input::AxisId::RZ, axisClassicRScaler};
+						axis[0] = {Input::AxisId::X, axisClassicLScaler};
+						axis[1] = {Input::AxisId::Y, axisClassicLScaler};
+						axis[2] = {Input::AxisId::Z, axisClassicRScaler};
+						axis[3] = {Input::AxisId::RZ, axisClassicRScaler};
 						assert(!extDevicePtr);
 						extDevicePtr = &ctx.application().addInputDevice(ctx,
 							std::make_unique<Input::Device>(std::in_place_type<WiimoteExtDevice>, Input::Map::WII_CC, DeviceTypeFlags{.gamepad = true}, "Wii Classic Controller"), true);
@@ -410,8 +410,8 @@ bool Wiimote::dataHandler(Input::Device &dev, const char *packetPtr, size_t size
 						sendDataModeByExtension();
 						std::ranges::fill(prevExtData, 0xFF);
 						static constexpr float axisNunchukScaler = 1./127.;
-						axis[0] = {Input::Map::WIIMOTE, Input::AxisId::X, axisNunchukScaler};
-						axis[1] = {Input::Map::WIIMOTE, Input::AxisId::Y, axisNunchukScaler};
+						axis[0] = {Input::AxisId::X, axisNunchukScaler};
+						axis[1] = {Input::AxisId::Y, axisNunchukScaler};
 					}
 					else if(memcmp(&packet[8], wiiUProType, sizeof(ccType)) == 0)
 					{
@@ -420,10 +420,10 @@ bool Wiimote::dataHandler(Input::Device &dev, const char *packetPtr, size_t size
 						sendDataModeByExtension();
 						std::ranges::fill(prevExtData, 0xFF);
 						static constexpr float axisClassicProScaler = 1./2047.;
-						axis[0] = {Input::Map::WII_CC, Input::AxisId::X, axisClassicProScaler};
-						axis[1] = {Input::Map::WII_CC, Input::AxisId::Y, axisClassicProScaler};
-						axis[2] = {Input::Map::WII_CC, Input::AxisId::Z, axisClassicProScaler};
-						axis[3] = {Input::Map::WII_CC, Input::AxisId::RZ, axisClassicProScaler};
+						axis[0] = {Input::AxisId::X, axisClassicProScaler};
+						axis[1] = {Input::AxisId::Y, axisClassicProScaler};
+						axis[2] = {Input::AxisId::Z, axisClassicProScaler};
+						axis[3] = {Input::AxisId::RZ, axisClassicProScaler};
 						map_ = Input::Map::WII_CC;
 						name_ = "Wii U Pro Controller";
 					}

@@ -30,13 +30,13 @@ PlaceVideoView::PlaceVideoView(ViewAttachParams attach, EmuVideoLayer &layer, VC
 	quads{attach.rendererTask, {.size = 4}}
 {
 	app().applyOSNavStyle(appContext(), true);
-	layer.setBrightness(app().videoBrightnessAsRGB());
+	layer.setBrightnessScale(1.f);
 }
 
 PlaceVideoView::~PlaceVideoView()
 {
 	app().applyOSNavStyle(appContext(), false);
-	layer.setBrightness(app().videoBrightnessAsRGB() * menuVideoBrightnessScale);
+	layer.setBrightnessScale(menuVideoBrightnessScale);
 }
 
 void PlaceVideoView::place()
@@ -63,9 +63,9 @@ void PlaceVideoView::place()
 	Quad{{.bounds = resetBounds.as<int16_t>()}}.write(map, 3);
 }
 
-bool PlaceVideoView::inputEvent(const Input::Event &e)
+bool PlaceVideoView::inputEvent(const Input::Event& e, ViewInputEventParams)
 {
-	return visit(overloaded
+	return e.visit(overloaded
 	{
 		[&](const Input::KeyEvent &e)
 		{
@@ -150,10 +150,10 @@ bool PlaceVideoView::inputEvent(const Input::Event &e)
 			}
 			return true;
 		}
-	}, e);
+	});
 }
 
-void PlaceVideoView::draw(Gfx::RendererCommands &__restrict__ cmds)
+void PlaceVideoView::draw(Gfx::RendererCommands&__restrict__ cmds, ViewDrawParams) const
 {
 	using namespace IG::Gfx;
 	vController.draw(cmds, true);

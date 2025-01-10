@@ -20,17 +20,16 @@
 namespace EmuEx
 {
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
-class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<CustomSystemOptionView>
+class CustomSystemOptionView : public SystemOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemOptionView>::system;
+	using MainAppHelper::system;
 
 	BoolMenuItem ngpLanguage
 	{
 		"NGP Language", attachParams(),
-		(bool)system().optionNGPLanguage.val,
+		system().optionNGPLanguage,
 		"Japanese", "English",
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{

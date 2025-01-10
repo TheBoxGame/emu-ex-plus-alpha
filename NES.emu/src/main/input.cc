@@ -21,10 +21,12 @@
 #include "MainApp.hh"
 #include <fceu/fceu.h>
 #include <fceu/fds.h>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
 
+constexpr SystemLogger log{"NES.emu"};
 const int EmuSystem::maxPlayers = 4;
 
 enum class NesKey : KeyCode
@@ -55,6 +57,11 @@ constexpr auto centerKeyInfo = makeArray<KeyInfo>
 	NesKey::Start
 );
 
+constexpr std::array p2StartKeyInfo
+{
+	KeyInfo{NesKey::Start, {.deviceId = 1}}
+};
+
 constexpr auto faceKeyInfo = makeArray<KeyInfo>
 (
 	NesKey::B,
@@ -81,8 +88,8 @@ std::span<const KeyCategory> NesApp::keyCategories()
 	{
 		KeyCategory{"Gamepad", gpKeyInfo},
 		KeyCategory{"Gamepad 2", gp2KeyInfo, 1},
-		KeyCategory{"Gamepad 3", gp2KeyInfo, 2},
-		KeyCategory{"Gamepad 4", gp2KeyInfo, 3},
+		KeyCategory{"Gamepad 3", gp3KeyInfo, 2},
+		KeyCategory{"Gamepad 4", gp4KeyInfo, 3},
 		KeyCategory{"Extra Functions", exKeyInfo},
 	};
 	return categories;
@@ -197,12 +204,12 @@ void NesSystem::connectNESInput(int port, ESI type)
 	assert(GameInfo);
 	if(type == SI_GAMEPAD)
 	{
-		//logMsg("gamepad to port %d", port);
+		//log.debug("gamepad to port {}", port);
 		FCEUI_SetInput(port, SI_GAMEPAD, &padData, 0);
 	}
 	else if(type == SI_ZAPPER)
 	{
-		//logMsg("zapper to port %d", port);
+		//log.debug("zapper to port {}", port);
 		FCEUI_SetInput(port, SI_ZAPPER, &zapperData, 1);
 	}
 	else
@@ -230,8 +237,9 @@ void NesSystem::handleInputAction(EmuApp *app, InputAction a)
 	{
 		if(!isFDS || !a.isPushed())
 			return;
+		EmuSystemTask::SuspendContext suspendCtx;
 		if(app)
-			app->syncEmulationThread();
+			suspendCtx = app->suspendEmulationThread();
 		if(FCEU_FDSInserted())
 		{
 			FCEU_FDSInsert();
@@ -285,14 +293,14 @@ void NesSystem::handleInputAction(EmuApp *app, InputAction a)
 			{
 				hsKey = hsKey == 0x3 ? 0x3 : hsKey ^ 0x3; // swap the 2 bits
 				auto hsPlayerInputShift = player == 1 ? 3 : 1;
-				fcExtData = IG::setOrClearBits(fcExtData, hsKey << hsPlayerInputShift, a.isPushed());
+				fcExtData = setOrClearBits(fcExtData, hsKey << hsPlayerInputShift, a.isPushed());
 			}
 		}
 		padData = setOrClearBits(padData, gpBits << playerInputShift(player), a.isPushed());
 	}
 }
 
-bool NesSystem::onPointerInputStart(const Input::MotionEvent &e, Input::DragTrackerState, IG::WindowRect gameRect)
+bool NesSystem::onPointerInputStart(const Input::MotionEvent &e, Input::DragTrackerState, WRect gameRect)
 {
 	if(!usingZapper)
 		return false;
@@ -300,9 +308,9 @@ bool NesSystem::onPointerInputStart(const Input::MotionEvent &e, Input::DragTrac
 	if(gameRect.overlaps(e.pos()))
 	{
 		int xRel = e.pos().x - gameRect.x, yRel = e.pos().y - gameRect.y;
-		int xNes = IG::remap(xRel, 0, gameRect.xSize(), 0, 256);
-		int yNes = IG::remap(yRel, 0, gameRect.ySize(), 0, 224) + 8;
-		logMsg("zapper pushed @ %d,%d, on NES %d,%d", e.pos().x, e.pos().y, xNes, yNes);
+		int xNes = remap(xRel, 0, gameRect.xSize(), 0, 256);
+		int yNes = remap(yRel, 0, gameRect.ySize(), 0, 224) + 8;
+		log.info("zapper pushed @ {},{}, on NES {},{}", e.pos().x, e.pos().y, xNes, yNes);
 		zapperData[0] = xNes;
 		zapperData[1] = yNes;
 		zapperData[2] |= 0x1;
@@ -316,7 +324,7 @@ bool NesSystem::onPointerInputStart(const Input::MotionEvent &e, Input::DragTrac
 	return true;
 }
 
-bool NesSystem::onPointerInputEnd(const Input::MotionEvent &, Input::DragTrackerState, IG::WindowRect)
+bool NesSystem::onPointerInputEnd(const Input::MotionEvent &, Input::DragTrackerState, WRect)
 {
 	if(!usingZapper)
 		return false;
@@ -326,7 +334,7 @@ bool NesSystem::onPointerInputEnd(const Input::MotionEvent &, Input::DragTracker
 
 void NesSystem::clearInputBuffers(EmuInputView &)
 {
-	IG::fill(zapperData);
+	fill(zapperData);
 	padData = {};
 	fcExtData = {};
 }
@@ -340,6 +348,7 @@ SystemInputDeviceDesc NesSystem::inputDeviceDesc(int idx) const
 		InputComponentDesc{"Select", {&centerKeyInfo[0], 1}, InputComponent::button, LB2DO},
 		InputComponentDesc{"Start", {&centerKeyInfo[1], 1}, InputComponent::button, RB2DO},
 		InputComponentDesc{"Select/Start", centerKeyInfo, InputComponent::button, CB2DO, {.altConfig = true}},
+		InputComponentDesc{"P2 Start (Famicom Microphone)", p2StartKeyInfo, InputComponent::button, RB2DO, {.altConfig = true}},
 	};
 
 	static constexpr SystemInputDeviceDesc gamepadDesc{"Gamepad", gamepadComponents};

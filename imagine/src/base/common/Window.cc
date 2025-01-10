@@ -44,37 +44,34 @@ BaseWindow::BaseWindow(ApplicationContext ctx, WindowConfig config):
 					{
 						auto &win = *static_cast<Window*>(this);
 						win.setDrawEventPriority(savedDrawEventPriority);
-						attachDrawEvent();
+						drawEvent.attach();
 						return false;
 					}, WINDOW_ON_RESUME_PRIORITY
 				);
 			}
 			return true;
-		}, ctx, WINDOW_ON_EXIT_PRIORITY}
-{
-	attachDrawEvent();
-}
-
-void BaseWindow::attachDrawEvent()
-{
-	drawEvent.attach(
-		[&win = *static_cast<Window*>(this)]()
+		}, ctx, WINDOW_ON_EXIT_PRIORITY
+	},
+	drawEvent
+	{
+		{.debugLabel = "Window::drawEvent", .eventLoop = EventLoop::forThread()},
+		[&win = *static_cast<Window*>(this)]
 		{
 			//log.debug("running window events");
 			win.dispatchOnFrame();
 			win.dispatchOnDraw();
-		});
+		}
+	} {}
+
+FrameTimeSource Window::evalFrameTimeSource(FrameTimeSource src) const
+{
+	return src == FrameTimeSource::Unset ? defaultFrameTimeSource() : src;
 }
 
-FrameTimeSource Window::evalFrameTimeSource(FrameTimeSource clock) const
+bool Window::addOnFrame(OnFrameDelegate del, FrameTimeSource src, int priority)
 {
-	return clock == FrameTimeSource::Unset ? defaultFrameTimeSource() : clock;
-}
-
-bool Window::addOnFrame(OnFrameDelegate del, FrameTimeSource clock, int priority)
-{
-	clock = evalFrameTimeSource(clock);
-	if(clock == FrameTimeSource::Screen)
+	src = evalFrameTimeSource(src);
+	if(src != FrameTimeSource::Renderer)
 	{
 		return screen()->addOnFrame(del);
 	}
@@ -91,10 +88,10 @@ bool Window::addOnFrame(OnFrameDelegate del, FrameTimeSource clock, int priority
 	}
 }
 
-bool Window::removeOnFrame(OnFrameDelegate del, FrameTimeSource clock)
+bool Window::removeOnFrame(OnFrameDelegate del, FrameTimeSource src)
 {
-	clock = evalFrameTimeSource(clock);
-	if(clock == FrameTimeSource::Screen)
+	src = evalFrameTimeSource(src);
+	if(src != FrameTimeSource::Renderer)
 	{
 		return screen()->removeOnFrame(del);
 	}
@@ -112,7 +109,18 @@ bool Window::moveOnFrame(Window &srcWin, OnFrameDelegate del, FrameTimeSource sr
 
 FrameTimeSource Window::defaultFrameTimeSource() const
 {
-	return screen()->supportsTimestamps() ? FrameTimeSource::Screen : FrameTimeSource::Renderer;
+	return screen()->supportsTimestamps() ? FrameTimeSource::Screen :
+		(Config::envIsAndroid ? FrameTimeSource::Renderer : FrameTimeSource::Timer);
+}
+
+void Window::configureFrameTimeSource(FrameTimeSource src)
+{
+	src = evalFrameTimeSource(src);
+	log.info("configuring for frame time source:{}", wise_enum::to_string(src));
+	if(src != FrameTimeSource::Renderer)
+	{
+		screen()->setVariableFrameTime(src == FrameTimeSource::Timer);
+	}
 }
 
 void Window::resetAppData()
@@ -195,12 +203,25 @@ void Window::postFrameReadyToMainThread()
 	postFrameReady();
 }
 
+void Window::setFrameEventsOnThisThread()
+{
+	unpostDraw();
+	screen()->setFrameEventsOnThisThread();
+	drawEvent.attach();
+}
+
+void Window::removeFrameEvents()
+{
+	unpostDraw();
+	screen()->removeFrameEvents();
+	drawEvent.detach();
+}
+
 int8_t Window::setDrawEventPriority(int8_t priority)
 {
 	if(priority == drawEventPriorityLocked)
 	{
 		setNeedsDraw(false);
-		drawPhase = DrawPhase::UPDATE;
 	}
 	return std::exchange(drawEventPriority_, priority);
 }
@@ -218,13 +239,13 @@ void Window::drawNow(bool needsSync)
 bool Window::dispatchInputEvent(Input::Event event)
 {
 	bool handled = onEvent.callCopy(*this, event);
-	return visit(overloaded{
-		[&](const Input::MotionEvent &e)
+	return event.visit(overloaded{
+		[&](const Input::MotionEvent& e)
 		{
 			return handled || (e.isPointer() && contentBounds().overlaps(e.pos()));
 		},
-		[&](const Input::KeyEvent &e) { return handled; }
-	}, event);
+		[&](const Input::KeyEvent&) { return handled; }
+	});
 }
 
 bool Window::dispatchRepeatableKeyInputEvent(Input::KeyEvent event)

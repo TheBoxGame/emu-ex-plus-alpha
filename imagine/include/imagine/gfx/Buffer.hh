@@ -38,15 +38,12 @@ public:
 		buff{std::move(buff)} {}
 	constexpr operator std::span<T>() const { return span(); }
 	constexpr std::span<T> span() const { return {data(), size()}; }
-	constexpr T *data() const { return reinterpret_cast<T*>(buff.data()); }
+	constexpr auto data(this auto&& self) { return reinterpret_cast<T*>(self.buff.data()); }
 	constexpr size_t size() const { return buff.size() / sizeof(T); }
-	constexpr T& operator[] (size_t idx) { return data()[idx]; }
-	constexpr const T& operator[] (size_t idx) const { return data()[idx]; }
+	constexpr auto& operator[] (this auto&& self, size_t idx) { return self.data()[idx]; }
 	constexpr explicit operator bool() const { return bool(buff); }
-	constexpr auto begin() { return data(); }
-	constexpr auto end() { return data() + size(); }
-	constexpr auto begin() const { return data(); }
-	constexpr auto end() const { return data() + size(); }
+	constexpr auto begin(this auto&& self) { return self.data(); }
+	constexpr auto end(this auto&& self) { return self.data() + self.size(); }
 
 protected:
 	MappedByteBuffer buff;
@@ -69,7 +66,8 @@ public:
 	bool hasTask() const { return BaseBuffer::taskPtr(); }
 	void reset(BufferConfig<T> config) { BaseBuffer::reset(config.toByteConfig()); }
 	size_t size() const { return BaseBuffer::sizeBytes() / elemSize; }
-	MappedBuffer<T> map(ssize_t offset, size_t size) { return {BaseBuffer::map(offset * elemSize, size * elemSize)}; }
+	MappedBuffer<T> map(ssize_t offset, size_t size, BufferMapMode mode = BufferMapMode::unset) { return {BaseBuffer::map(offset * elemSize, size * elemSize, mode)}; }
+	MappedBuffer<T> map(BufferMapMode mode) { return map(0, 0, mode); }
 	MappedBuffer<T> map() { return map(0, 0); }
 };
 
@@ -110,7 +108,7 @@ public:
 	ObjectVertexBuffer(RendererTask &rTask, ObjectBufferConfig<T> config): VertexBuffer<Vertex>{rTask, config.toBufferConfig()} {}
 	void reset(ObjectBufferConfig<T> config) { VertexBuffer<Vertex>::reset(config.toBufferConfig()); }
 	size_t size() const { return BaseBuffer::size() / T::vertexCount; }
-	MappedBuffer<Vertex> map(ssize_t offset, size_t size) { return BaseBuffer::map(offset * T::vertexCount, size * T::vertexCount); }
+	MappedBuffer<Vertex> map(ssize_t offset, size_t size, BufferMapMode mode = BufferMapMode::unset) { return BaseBuffer::map(offset * T::vertexCount, size * T::vertexCount, mode); }
 	void write(ssize_t offset, T obj) { obj.write(*this, offset); }
 	void write(ssize_t offset, T::InitParams params) { write(offset, T{params}); }
 };

@@ -24,8 +24,8 @@
 #include <imagine/base/GLContext.hh>
 #include <imagine/base/ApplicationContext.hh>
 #include <imagine/base/Viewport.hh>
-#include <imagine/base/Error.hh>
 #include <imagine/data-type/image/PixmapSource.hh>
+#include <imagine/util/opengl/glUtils.hh>
 #include "internalDefs.hh"
 
 namespace IG::Gfx
@@ -34,9 +34,13 @@ namespace IG::Gfx
 static_assert(!Config::Gfx::OPENGL_ES || Config::Gfx::OPENGL_ES >= 2);
 static_assert((uint8_t)TextureBufferMode::DEFAULT == 0, "TextureBufferMode::DEFAULT != 0");
 
+constexpr SystemLogger log{"GLRenderer"};
+bool checkGLErrors = Config::DEBUG_BUILD;
+bool checkGLErrorsVerbose = false;
+[[gnu::weak]] const bool Renderer::enableSamplerObjects = false;
+
 Renderer::Renderer(ApplicationContext ctx):
-	GLRenderer{ctx}
-{}
+	GLRenderer{ctx} {}
 
 Renderer::~Renderer()
 {
@@ -50,11 +54,21 @@ Renderer::~Renderer()
 GLRenderer::GLRenderer(ApplicationContext ctx):
 	glManager{ctx.nativeDisplayConnection(), glAPI},
 	mainTask{ctx, "Main GL Context Messages", *static_cast<Renderer*>(this)},
-	releaseShaderCompilerEvent{"GLRenderer::releaseShaderCompilerEvent"}
+	releaseShaderCompilerEvent
+	{
+		{.debugLabel = "GLRenderer::releaseShaderCompilerEvent"},
+		[&task = mainTask, ctx]
+		{
+			if(!ctx.isRunning())
+				return;
+			logMsg("automatically releasing shader compiler");
+			task.releaseShaderCompiler();
+		}
+	}
 {
 	if(!glManager)
 	{
-		throw std::runtime_error("Renderer error getting GL display");
+		throw std::runtime_error("Error getting GL display");
 	}
 	glManager.logInfo();
 }
@@ -69,14 +83,14 @@ void Renderer::initMainTask(Window *initialWindow, DrawableConfig drawableConfig
 	auto bufferConfig = makeGLBufferConfig(ctx, drawableConfig.pixelFormat, initialWindow);
 	if(!bufferConfig) [[unlikely]]
 	{
-		throw std::runtime_error("Renderer error finding a GL configuration");
+		throw std::runtime_error("Error finding a GL configuration");
 	}
 	Drawable initialDrawable{};
 	if(initialWindow)
 	{
 		if(!GLRenderer::attachWindow(*initialWindow, *bufferConfig, (GLColorSpace)drawableConfig.colorSpace))
 		{
-			throw std::runtime_error("Renderer error creating window surface");
+			throw std::runtime_error("Error creating window surface");
 		}
 		initialDrawable = (Drawable)winData(*initialWindow).drawable;
 	}
@@ -88,13 +102,13 @@ void Renderer::initMainTask(Window *initialWindow, DrawableConfig drawableConfig
 	};
 	if(!mainTask.makeGLContext(conf)) [[unlikely]]
 	{
-		throw std::runtime_error("Renderer error creating GL context");
+		throw std::runtime_error("Error creating GL context");
 	}
 	addEventHandlers(ctx, mainTask);
 	configureRenderer();
 	if(!initBasicEffect()) [[unlikely]]
 	{
-		throw std::runtime_error("Renderer error creating basic shader program");
+		throw std::runtime_error("Error creating basic shader program");
 	}
 	quadIndices = {mainTask, 32};
 }
@@ -102,6 +116,19 @@ void Renderer::initMainTask(Window *initialWindow, DrawableConfig drawableConfig
 NativeWindowFormat GLRenderer::nativeWindowFormat(GLBufferConfig bufferConfig) const
 {
 	return glManager.nativeWindowFormat(mainTask.appContext(), bufferConfig);
+}
+
+static float rotationRadians(Rotation r)
+{
+	switch(r)
+	{
+		case Rotation::ANY:
+		case Rotation::UP: return radians(0.);
+		case Rotation::RIGHT: return radians(90.);
+		case Rotation::DOWN: return radians(-180.);
+		case Rotation::LEFT: return radians(-90.);
+	}
+	bug_unreachable("Rotation == %d", std::to_underlying(r));
 }
 
 bool GLRenderer::attachWindow(Window &win, GLBufferConfig bufferConfig, GLColorSpace colorSpace)
@@ -299,7 +326,7 @@ int GLRenderer::toSwapInterval(const Window &win, PresentMode mode) const
 	std::unreachable();
 }
 
-PresentMode Renderer::evalPresentMode(const Window &win, PresentMode mode) const
+PresentMode Renderer::evalPresentMode(const Window&, PresentMode mode) const
 {
 	if(mode == PresentMode::Auto)
 		return PresentMode::FIFO;
@@ -339,10 +366,10 @@ ColorSpace Renderer::supportedColorSpace(PixelFormat fmt, ColorSpace wantedColor
 	{
 		case ColorSpace::LINEAR: return ColorSpace::LINEAR;
 		case ColorSpace::SRGB:
-			switch(fmt.id())
+			switch(fmt.id)
 			{
-				case PIXEL_FMT_RGBA8888:
-				case PIXEL_FMT_BGRA8888:
+				case PixelFmtRGBA8888:
+				case PixelFmtBGRA8888:
 					return ColorSpace::SRGB;
 				default: return ColorSpace::LINEAR;
 			}
@@ -380,15 +407,15 @@ std::vector<DrawableConfigDesc> Renderer::supportedDrawableConfigs() const
 	{
 		{
 			.name = "RGBA8888",
-			.config{ .pixelFormat = PIXEL_RGBA8888 }
+			.config{ .pixelFormat = PixelFmtRGBA8888 }
 		},
 		{
 			.name = "RGBA8888:sRGB",
-			.config{ .pixelFormat = PIXEL_RGBA8888, .colorSpace = ColorSpace::SRGB }
+			.config{ .pixelFormat = PixelFmtRGBA8888, .colorSpace = ColorSpace::SRGB }
 		},
 		{
 			.name = "RGB565",
-			.config{ .pixelFormat = PIXEL_RGB565 }
+			.config{ .pixelFormat = PixelFmtRGB565 }
 		},
 	};
 	for(auto desc : testDescs)
@@ -474,7 +501,7 @@ BasicEffect &Renderer::basicEffect()
 void Renderer::animateWindowRotation(Window &win, float srcAngle, float destAngle)
 {
 	winData(win).projAngleM = {srcAngle, destAngle, {}, SteadyClock::now(), Milliseconds{165}};
-	win.addOnFrame([this, &win](FrameParams params)
+	win.addOnFrame([&win](FrameParams params)
 	{
 		win.signalSurfaceChanged({.contentRectResized = true});
 		bool didUpdate = winData(win).projAngleM.update(params.timestamp);
@@ -518,5 +545,543 @@ void destroyGLBuffer(RendererTask &task, NativeBuffer buff)
 }
 
 const IndexBuffer<uint8_t> &rendererQuadIndices(const RendererTask &rTask) { return rTask.renderer().quadIndices; }
+
+void Renderer::setCorrectnessChecks(bool on)
+{
+	if(on)
+	{
+		log.warn("enabling verification of OpenGL state");
+	}
+	GLStateCache::verifyState = on;
+	checkGLErrors = on ? true : Config::DEBUG_BUILD;
+	checkGLErrorsVerbose = on;
+}
+
+static void printFeatures(DrawContextSupport support)
+{
+	if constexpr(!Config::DEBUG_BUILD)
+		return;
+	std::string featuresStr{};
+	featuresStr.reserve(256);
+
+	featuresStr.append(" [Texture Size:");
+	featuresStr.append(std::format("{}", support.textureSizeSupport.maxXSize));
+	featuresStr.append("]");
+	if(support.textureSizeSupport.nonPow2CanRepeat)
+		featuresStr.append(" [NPOT Textures w/ Mipmap+Repeat]");
+	else if(support.textureSizeSupport.nonPow2CanMipmap)
+		featuresStr.append(" [NPOT Textures w/ Mipmap]");
+	#ifdef CONFIG_GFX_OPENGL_ES
+	if(support.hasBGRPixels)
+	{
+		featuresStr.append(" [BGRA Format]");
+	}
+	#endif
+	if(Config::Gfx::OPENGL_ES && support.hasTextureSwizzle)
+	{
+		featuresStr.append(" [Texture Swizzle]");
+	}
+	if(support.hasImmutableTexStorage)
+	{
+		featuresStr.append(" [Immutable Texture Storage]");
+	}
+	if(support.hasImmutableBufferStorage())
+	{
+		featuresStr.append(" [Immutable Buffer Storage]");
+	}
+	if(support.hasMemoryBarriers())
+	{
+		featuresStr.append(" [Memory Barriers]");
+	}
+	if(Config::Gfx::OPENGL_ES && support.hasUnpackRowLength)
+	{
+		featuresStr.append(" [Unpack Sub-Images]");
+	}
+	if(Config::Gfx::OPENGL_ES && support.hasSamplerObjects)
+	{
+		featuresStr.append(" [Sampler Objects]");
+	}
+	if(Config::Gfx::OPENGL_ES && support.hasVAOFuncs())
+	{
+		featuresStr.append(" [VAOs]");
+	}
+	if(Config::Gfx::OPENGL_ES && support.hasPBOFuncs)
+	{
+		featuresStr.append(" [PBOs]");
+	}
+	if(!Config::Gfx::OPENGL_ES || (Config::Gfx::OPENGL_ES && (bool)support.glMapBufferRange))
+	{
+		featuresStr.append(" [Map Buffer Range]");
+	}
+	if(support.hasSyncFences())
+	{
+		if(Config::GL_PLATFORM_EGL)
+		{
+			if(support.hasServerWaitSync())
+				featuresStr.append(" [EGL Sync Fences + Server Sync]");
+			else
+				featuresStr.append(" [EGL Sync Fences]");
+		}
+		else
+		{
+			featuresStr.append(" [Sync Fences]");
+		}
+	}
+	if(Config::Gfx::OPENGL_ES && support.hasSrgbWriteControl)
+	{
+		featuresStr.append(" [sRGB FB Write Control]");
+	}
+	featuresStr.append(" [GLSL:");
+	featuresStr.append((const char*)glGetString(GL_SHADING_LANGUAGE_VERSION));
+	featuresStr.append("]");
+
+	logMsg("features:%s", featuresStr.c_str());
+}
+
+#ifdef __ANDROID__
+EGLImageKHR makeAndroidNativeBufferEGLImage(EGLDisplay dpy, EGLClientBuffer clientBuff, bool srgb)
+{
+	EGLint eglImgAttrs[]
+	{
+		EGL_IMAGE_PRESERVED_KHR,
+		EGL_TRUE,
+		srgb ? EGL_GL_COLORSPACE : EGL_NONE,
+		srgb ? EGL_GL_COLORSPACE_SRGB : EGL_NONE,
+		EGL_NONE
+	};
+	return eglCreateImageKHR(dpy, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
+		clientBuff, eglImgAttrs);
+}
+#endif
+
+void GLRenderer::setupNonPow2MipmapRepeatTextures()
+{
+	support.textureSizeSupport.nonPow2CanMipmap = true;
+	support.textureSizeSupport.nonPow2CanRepeat = true;
+}
+
+void GLRenderer::setupImmutableTexStorage([[maybe_unused]] bool extSuffix)
+{
+	if(support.hasImmutableTexStorage)
+		return;
+	support.hasImmutableTexStorage = true;
+	#ifdef CONFIG_GFX_OPENGL_ES
+	const char *procName = extSuffix ? "glTexStorage2DEXT" : "glTexStorage2D";
+	support.glTexStorage2D = (typeof(support.glTexStorage2D))glManager.procAddress(procName);
+	#endif
+}
+
+void GLRenderer::setupRGFormats()
+{
+	support.luminanceFormat = GL_RED;
+	support.luminanceInternalFormat = GL_R8;
+	support.luminanceAlphaFormat = GL_RG;
+	support.luminanceAlphaInternalFormat = GL_RG8;
+	support.alphaFormat = GL_RED;
+	support.alphaInternalFormat = GL_R8;
+}
+
+void GLRenderer::setupSamplerObjects()
+{
+	if(!Renderer::enableSamplerObjects || support.hasSamplerObjects)
+		return;
+	support.hasSamplerObjects = true;
+	#ifdef CONFIG_GFX_OPENGL_ES
+	support.glGenSamplers = (typeof(support.glGenSamplers))glManager.procAddress("glGenSamplers");
+	support.glDeleteSamplers = (typeof(support.glDeleteSamplers))glManager.procAddress("glDeleteSamplers");
+	support.glBindSampler = (typeof(support.glBindSampler))glManager.procAddress("glBindSampler");
+	support.glSamplerParameteri = (typeof(support.glSamplerParameteri))glManager.procAddress("glSamplerParameteri");
+	#endif
+}
+
+void GLRenderer::setupSpecifyDrawReadBuffers()
+{
+	#ifdef CONFIG_GFX_OPENGL_ES
+	//support.glDrawBuffers = (typeof(support.glDrawBuffers))glManager.procAddress("glDrawBuffers");
+	//support.glReadBuffer = (typeof(support.glReadBuffer))glManager.procAddress("glReadBuffer");
+	#endif
+}
+
+void GLRenderer::setupUnmapBufferFunc()
+{
+	#ifdef CONFIG_GFX_OPENGL_ES
+	if(!support.glUnmapBuffer)
+	{
+		if constexpr(Config::envIsAndroid || Config::envIsIOS)
+		{
+			support.glUnmapBuffer = (DrawContextSupport::UnmapBufferProto)glUnmapBufferOES;
+		}
+		else
+		{
+			if constexpr((bool)Config::Gfx::OPENGL_ES)
+			{
+				support.glUnmapBuffer = (typeof(support.glUnmapBuffer))glManager.procAddress("glUnmapBufferOES");
+			}
+			else
+			{
+				support.glUnmapBuffer = (typeof(support.glUnmapBuffer))glManager.procAddress("glUnmapBuffer");
+			}
+		}
+	}
+	#endif
+}
+
+void GLRenderer::setupImmutableBufferStorage()
+{
+	if(support.hasImmutableBufferStorage())
+		return;
+	#ifdef CONFIG_GFX_OPENGL_ES
+	support.glBufferStorage = (typeof(support.glBufferStorage))glManager.procAddress("glBufferStorageEXT");
+	#else
+	support.hasBufferStorage = true;
+	#endif
+}
+
+void GLRenderer::setupMemoryBarrier()
+{
+	/*if(support.hasMemoryBarriers())
+		return;
+	#ifdef CONFIG_GFX_OPENGL_ES
+	support.glMemoryBarrier = (typeof(support.glMemoryBarrier))glManager.procAddress("glMemoryBarrier");
+	#else
+	support.hasMemoryBarrier = true;
+	#endif*/
+}
+
+void GLRenderer::setupVAOFuncs([[maybe_unused]] bool oes)
+{
+	#ifdef CONFIG_GFX_OPENGL_ES
+	if(support.glBindVertexArray)
+		return;
+	if(oes)
+	{
+		support.glBindVertexArray = (typeof(support.glBindVertexArray))glManager.procAddress("glBindVertexArrayOES");
+		support.glGenVertexArrays = (typeof(support.glGenVertexArrays))glManager.procAddress("glGenVertexArraysOES");
+		support.glDeleteVertexArrays = (typeof(support.glDeleteVertexArrays))glManager.procAddress("glDeleteVertexArraysOES");
+	}
+	else
+	{
+		support.glBindVertexArray = (typeof(support.glBindVertexArray))glManager.procAddress("glBindVertexArray");
+		support.glGenVertexArrays = (typeof(support.glGenVertexArrays))glManager.procAddress("glGenVertexArrays");
+		support.glDeleteVertexArrays = (typeof(support.glDeleteVertexArrays))glManager.procAddress("glDeleteVertexArrays");
+	}
+	#endif
+}
+
+void GLRenderer::setupFenceSync()
+{
+	#if !defined CONFIG_BASE_GL_PLATFORM_EGL && defined CONFIG_GFX_OPENGL_ES
+	if(support.hasSyncFences())
+		return;
+	glManager.loadSymbol(support.glFenceSync, "glFenceSync");
+	glManager.loadSymbol(support.glDeleteSync, "glDeleteSync");
+	glManager.loadSymbol(support.glClientWaitSync, "glClientWaitSync");
+	//glManager.loadSymbol(support.glWaitSync, "glWaitSync");
+	#endif
+}
+
+void GLRenderer::setupAppleFenceSync()
+{
+	#if !defined CONFIG_BASE_GL_PLATFORM_EGL && defined CONFIG_GFX_OPENGL_ES
+	if(support.hasSyncFences())
+		return;
+	glManager.loadSymbol(support.glFenceSync, "glFenceSyncAPPLE");
+	glManager.loadSymbol(support.glDeleteSync, "glDeleteSyncAPPLE");
+	glManager.loadSymbol(support.glClientWaitSync, "glClientWaitSyncAPPLE");
+	//glManager.loadSymbol(support.glWaitSync, "glWaitSyncAPPLE");
+	#endif
+}
+
+void GLRenderer::setupEglFenceSync([[maybe_unused]] std::string_view eglExtenstionStr)
+{
+	if(Config::MACHINE_IS_PANDORA)	// TODO: driver waits for full timeout even if commands complete,
+		return;												// possibly broken glFlush() behavior?
+	if(support.hasSyncFences())
+		return;
+	#if defined CONFIG_BASE_GL_PLATFORM_EGL && defined CONFIG_GFX_OPENGL_ES
+	// check for fence sync via EGL extensions
+	if(eglExtenstionStr.contains("EGL_KHR_fence_sync"))
+	{
+		glManager.loadSymbol(support.eglCreateSync, "eglCreateSyncKHR");
+		glManager.loadSymbol(support.eglDestroySync, "eglDestroySyncKHR");
+		glManager.loadSymbol(support.eglClientWaitSync, "eglClientWaitSyncKHR");
+		/*if(eglExtenstionStr.contains("EGL_KHR_wait_sync"))
+		{
+			glManager.loadSymbol(support.eglWaitSync, "eglWaitSyncKHR");
+		}*/
+	}
+	#endif
+}
+
+void GLRenderer::checkExtensionString(std::string_view extStr)
+{
+	//logMsg("checking %s", extStr);
+	if(Config::DEBUG_BUILD && Config::OpenGLDebugContext && extStr == "GL_KHR_debug")
+	{
+		support.hasDebugOutput = true;
+		#ifdef __ANDROID__
+		// older GPU drivers like Tegra 3 can crash when using debug output,
+		// only enable on recent Android version to be safe
+		if(mainTask.appContext().androidSDK() < 23)
+		{
+			support.hasDebugOutput = false;
+		}
+		#endif
+	}
+	#ifdef CONFIG_GFX_OPENGL_ES
+	else if(extStr == "GL_OES_texture_npot")
+	{
+		// allows mipmaps and repeat modes
+		setupNonPow2MipmapRepeatTextures();
+	}
+	else if(!Config::envIsIOS && extStr == "GL_NV_texture_npot_2D_mipmap")
+	{
+		// no repeat modes
+		support.textureSizeSupport.nonPow2CanMipmap = true;
+	}
+	else if(extStr == "GL_EXT_unpack_subimage")
+	{
+		support.hasUnpackRowLength = true;
+	}
+	else if((!Config::envIsIOS && extStr == "GL_EXT_texture_format_BGRA8888")
+			|| (Config::envIsIOS && extStr == "GL_APPLE_texture_format_BGRA8888"))
+	{
+		support.hasBGRPixels = true;
+	}
+	else if(extStr == "GL_EXT_texture_storage")
+	{
+		setupImmutableTexStorage(true);
+	}
+	else if(!Config::GL_PLATFORM_EGL && Config::envIsIOS && extStr == "GL_APPLE_sync")
+	{
+		setupAppleFenceSync();
+	}
+	else if(Config::envIsAndroid && extStr == "GL_OES_EGL_image")
+	{
+		support.hasEGLImages = true;
+	}
+	else if(Config::Gfx::OPENGL_TEXTURE_TARGET_EXTERNAL &&
+		extStr == "GL_OES_EGL_image_external")
+	{
+		support.hasExternalEGLImages = true;
+	}
+	#ifdef __ANDROID__
+	else if(extStr == "GL_EXT_EGL_image_storage")
+	{
+		support.glEGLImageTargetTexStorageEXT = (typeof(support.glEGLImageTargetTexStorageEXT))glManager.procAddress("glEGLImageTargetTexStorageEXT");
+	}
+	#endif
+	else if(extStr == "GL_NV_pixel_buffer_object")
+	{
+		support.hasPBOFuncs = true;
+	}
+	else if(extStr == "GL_NV_map_buffer_range")
+	{
+		if(!support.glMapBufferRange)
+			support.glMapBufferRange = (typeof(support.glMapBufferRange))glManager.procAddress("glMapBufferRangeNV");
+		setupUnmapBufferFunc();
+	}
+	else if(extStr == "GL_EXT_map_buffer_range")
+	{
+		if(!support.glMapBufferRange)
+			support.glMapBufferRange = (typeof(support.glMapBufferRange))glManager.procAddress("glMapBufferRangeEXT");
+		// Only using ES 3.0 version currently
+		//if(!support.glFlushMappedBufferRange)
+		//	support.glFlushMappedBufferRange = (typeof(support.glFlushMappedBufferRange))glManager.procAddress("glFlushMappedBufferRangeEXT");
+		setupUnmapBufferFunc();
+	}
+	else if(extStr == "GL_EXT_buffer_storage")
+	{
+		setupImmutableBufferStorage();
+	}
+	/*else if(string_equal(extStr, "GL_OES_mapbuffer"))
+	{
+		// handled in *_map_buffer_range currently
+	}*/
+	else if(extStr == "GL_EXT_sRGB_write_control")
+	{
+		support.hasSrgbWriteControl = true;
+	}
+	else if(extStr == "GL_OES_vertex_array_object"
+		&& !Config::MACHINE_IS_PANDORA) // VAOs may crash inside GL driver on Pandora
+	{
+		setupVAOFuncs(true);
+	}
+	#endif
+	#ifndef CONFIG_GFX_OPENGL_ES
+	/*else if(string_equal(extStr, "GL_EXT_texture_filter_anisotropic"))
+	{
+		setupAnisotropicFiltering();
+	}
+	else if(string_equal(extStr, "GL_ARB_multisample"))
+	{
+		setupMultisample();
+	}
+	else if(string_equal(extStr, "GL_NV_multisample_filter_hint"))
+	{
+		setupMultisampleHints();
+	}*/
+	else if(extStr == "GL_ARB_texture_storage")
+	{
+		setupImmutableTexStorage(false);
+	}
+	else if(extStr == "GL_ARB_buffer_storage")
+	{
+		setupImmutableBufferStorage();
+	}
+	else if(extStr == "GL_ARB_shader_image_load_store")
+	{
+		setupMemoryBarrier();
+	}
+	#endif
+}
+
+static void printGLExtensions()
+{
+	if constexpr(!Config::DEBUG_BUILD)
+		return;
+	std::string allExtStr;
+	log.beginInfo(allExtStr, "extensions: ");
+	forEachOpenGLExtension([&](const auto &extStr)
+	{
+		allExtStr += extStr;
+		allExtStr += ' ';
+	});
+	log.printInfo(allExtStr);
+}
+
+void Renderer::configureRenderer()
+{
+	if(Config::DEBUG_BUILD && defaultToFullErrorChecks)
+	{
+		setCorrectnessChecks(true);
+	}
+	task().runSync(
+		[this](GLTask::TaskContext ctx)
+		{
+			auto version = (const char*)glGetString(GL_VERSION);
+			assert(version);
+			auto rendererName = (const char*)glGetString(GL_RENDERER);
+			logMsg("version: %s (%s)", version, rendererName);
+
+			int glVer = glVersionFromStr(version);
+
+			#ifdef CONFIG_BASE_GL_PLATFORM_EGL
+			if constexpr((bool)Config::Gfx::OPENGL_ES)
+			{
+				auto extStr = ctx.glDisplay.queryExtensions();
+				setupEglFenceSync(extStr);
+			}
+			#endif
+
+			#ifndef CONFIG_GFX_OPENGL_ES
+			assert(glVer >= 33);
+			#else
+			// core functionality
+			assumeExpr(glVer >= 20);
+			if(glVer >= 30)
+				setupNonPow2MipmapRepeatTextures();
+			if(glVer >= 30)
+			{
+				support.glMapBufferRange = (typeof(support.glMapBufferRange))glManager.procAddress("glMapBufferRange");
+				support.glUnmapBuffer = (typeof(support.glUnmapBuffer))glManager.procAddress("glUnmapBuffer");
+				support.glFlushMappedBufferRange = (typeof(support.glFlushMappedBufferRange))glManager.procAddress("glFlushMappedBufferRange");
+				setupImmutableTexStorage(false);
+				support.hasTextureSwizzle = true;
+				setupRGFormats();
+				setupSamplerObjects();
+				support.hasPBOFuncs = true;
+				setupVAOFuncs();
+				if(!Config::GL_PLATFORM_EGL)
+					setupFenceSync();
+				if(!Config::envIsIOS)
+					setupSpecifyDrawReadBuffers();
+				support.hasUnpackRowLength = true;
+				support.useLegacyGLSL = false;
+			}
+			if(glVer >= 31)
+			{
+				setupMemoryBarrier();
+			}
+			#endif // CONFIG_GFX_OPENGL_ES
+
+			// extension functionality
+			forEachOpenGLExtension([&](const auto &extStr)
+			{
+				checkExtensionString(extStr);
+			});
+			printGLExtensions();
+
+			GLint texSize;
+			glGetIntegerv(GL_MAX_TEXTURE_SIZE, &texSize);
+			support.textureSizeSupport.maxXSize = support.textureSizeSupport.maxYSize = texSize;
+			assert(support.textureSizeSupport.maxXSize > 0 && support.textureSizeSupport.maxYSize > 0);
+
+			printFeatures(support);
+			task().runInitialCommandsInGL(ctx, support);
+		});
+	support.isConfigured = true;
+}
+
+bool Renderer::isConfigured() const
+{
+	return support.isConfigured;
+}
+
+const RendererTask &Renderer::task() const
+{
+	return mainTask;
+}
+
+RendererTask &Renderer::task()
+{
+	return mainTask;
+}
+
+void Renderer::setWindowValidOrientations(Window &win, Orientations validO)
+{
+	if(!win.isMainWindow())
+		return;
+	auto oldWinO = win.softOrientation();
+	if(win.setValidOrientations(validO) && !Config::SYSTEM_ROTATES_WINDOWS)
+	{
+		animateWindowRotation(win, rotationRadians(oldWinO), rotationRadians(win.softOrientation()));
+	}
+}
+
+void GLRenderer::addEventHandlers(ApplicationContext, RendererTask &task)
+{
+	releaseShaderCompilerEvent.attach();
+	if constexpr(Config::envIsIOS)
+		task.setIOSDrawableDelegates();
+}
+
+std::optional<GLBufferConfig> GLRenderer::makeGLBufferConfig(ApplicationContext ctx, IG::PixelFormat pixelFormat, const Window *winPtr)
+{
+	if(!pixelFormat)
+	{
+		if(winPtr)
+			pixelFormat = winPtr->pixelFormat();
+		else
+			pixelFormat = ctx.defaultWindowPixelFormat();
+	}
+	try
+	{
+		if constexpr(Config::Gfx::OPENGL_ES)
+		{
+			// prefer ES 3.x and fall back to 2.0
+			const GLBufferRenderConfigAttributes gl3Attrs{.bufferAttrs{.pixelFormat = pixelFormat}, .version = {3}, .api = glAPI};
+			const GLBufferRenderConfigAttributes gl2Attrs{.bufferAttrs{.pixelFormat = pixelFormat}, .version = {2}, .api = glAPI};
+			return glManager.makeBufferConfig(ctx, std::array{gl3Attrs, gl2Attrs});
+		}
+		else
+		{
+			// full OpenGL
+			const GLBufferRenderConfigAttributes gl3Attrs{.bufferAttrs{.pixelFormat = pixelFormat}, .version = {3, 3}, .api = glAPI};
+			return glManager.makeBufferConfig(ctx, gl3Attrs);
+		}
+	}
+	catch(...) { return {}; }
+}
 
 }

@@ -25,7 +25,7 @@
 namespace IG
 {
 
-static const char *androidBitmapResultToStr(int result)
+constexpr auto androidBitmapResultToStr(int result)
 {
 	switch(result)
 	{
@@ -53,7 +53,7 @@ AndroidFontManager::AndroidFontManager(ApplicationContext ctx):
 		{
 			"charMetricsCallback", "(JIIIII)V",
 			(void*)(void (*)(JNIEnv*, jobject, jlong, jint, jint, jint, jint, jint))
-			([](JNIEnv* env, jobject thiz, jlong metricsAddr,
+			([](JNIEnv*, jobject, jlong metricsAddr,
 					jint xSize, jint ySize, jint xOff, jint yOff, jint xAdv)
 			{
 				auto &metrics = *((GlyphMetrics*)metricsAddr);
@@ -114,8 +114,8 @@ Font::Glyph Font::glyph(int idx, FontSize &size)
 	if(!bitmap)
 		return {};
 	void *data{};
-	auto res = AndroidBitmap_lockPixels(env, bitmap, &data);
-	auto pix = makePixmapView(env, bitmap, data, PIXEL_A8);
+	[[maybe_unused]] auto res = AndroidBitmap_lockPixels(env, bitmap, &data);
+	auto pix = makePixmapView(env, bitmap, data, PixelFmtA8);
 	//logMsg("AndroidBitmap_lockPixels returned %s", androidBitmapResultToStr(res));
 	assert(res == ANDROID_BITMAP_RESULT_SUCCESS);
 	return {{{env, bitmap, mgr.recycleBitmapMethod()}, pix}, metrics};

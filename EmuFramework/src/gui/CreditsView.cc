@@ -45,7 +45,7 @@ void CreditsView::prepareDraw()
 	text.makeGlyphs();
 }
 
-void CreditsView::draw(Gfx::RendererCommands &__restrict__ cmds)
+void CreditsView::draw(Gfx::RendererCommands&__restrict__ cmds, ViewDrawParams) const
 {
 	using namespace IG::Gfx;
 	cmds.basicEffect().enableAlphaTexture(cmds);
@@ -57,13 +57,13 @@ void CreditsView::place()
 	text.compile({.alignment = Gfx::TextAlignment::center});
 }
 
-bool CreditsView::inputEvent(const Input::Event &e)
+bool CreditsView::inputEvent(const Input::Event& e, ViewInputEventParams)
 {
-	if(visit(overloaded
+	if(e.visit(overloaded
 		{
 			[&](const Input::MotionEvent &e) { return viewRect().overlaps(e.pos()) && e.released(); },
 			[&](const Input::KeyEvent &e) { return e.pushed(Input::DefaultKey::CANCEL); }
-		}, e))
+		}))
 	{
 		dismiss();
 		return true;

@@ -19,7 +19,7 @@
 #include <emuframework/EmuSystem.hh>
 #include <emuframework/VController.hh>
 #include <emuframework/Option.hh>
-#include "EmuOptions.hh"
+#include <emuframework/EmuOptions.hh>
 #include <imagine/util/math/Point2D.hh>
 #include <imagine/util/format.hh>
 #include <imagine/base/Window.hh>
@@ -27,7 +27,6 @@
 #include <imagine/gfx/RendererCommands.hh>
 #include <imagine/gfx/Vec3.hh>
 #include <imagine/gfx/Mat4.hh>
-#include <imagine/glm/common.hpp>
 #include <imagine/glm/gtc/color_space.hpp>
 #include <imagine/logger/logger.h>
 #include <algorithm>
@@ -47,12 +46,11 @@ void EmuVideoLayer::place(IG::WindowRect viewRect, IG::WindowRect displayRect, E
 	if(sys.hasContent() && video.size().x)
 	{
 		auto viewportAspectRatio = displayRect.xSize() / (float)displayRect.ySize();
-		auto zoom = zoom_;
 		auto contentSize = video.size();
 		if(isSideways(rotation))
 			std::swap(contentSize.x, contentSize.y);
 		contentRect_ = {};
-		if(zoom == optionImageZoomIntegerOnly || zoom == optionImageZoomIntegerOnlyY)
+		if(scale == optionContentScaleIntegerOnly || scale == optionContentScaleIntegerOnlyY)
 		{
 			int x = contentSize.x, y = contentSize.y;
 
@@ -100,13 +98,13 @@ void EmuVideoLayer::place(IG::WindowRect viewRect, IG::WindowRect displayRect, E
 			contentRect_.x2 = x * scaleFactor;
 			contentRect_.y2 = y * scaleFactor;
 		}
-		if(zoom <= 200 || zoom == optionImageZoomIntegerOnlyY)
+		if(scale <= 200 || scale == optionContentScaleIntegerOnlyY)
 		{
 			auto aR = evalAspectRatio(viewportAspectRatio < 1.f ? portraitAspectRatio : landscapeAspectRatio)
 				* sys.videoAspectRatioScale();
 			if(isSideways(rotation))
 				aR = 1. / aR;
-			if(zoom == optionImageZoomIntegerOnlyY)
+			if(scale == optionContentScaleIntegerOnlyY)
 			{
 				// get width from previously calculated pixel height
 				float width = contentRect_.ySize() * (float)aR;
@@ -125,9 +123,9 @@ void EmuVideoLayer::place(IG::WindowRect viewRect, IG::WindowRect displayRect, E
 				}
 				contentRect_.x2 = size.x;
 				contentRect_.y2 = size.y;
-				if(zoom != 100)
+				if(scale != 100)
 				{
-					auto scaler = zoom / 100.f;
+					auto scaler = scale / 100.f;
 					contentRect_.x2 *= scaler;
 					contentRect_.y2 *= scaler;
 				}
@@ -143,8 +141,7 @@ void EmuVideoLayer::place(IG::WindowRect viewRect, IG::WindowRect displayRect, E
 		}
 		contentRect_.fitIn(displayRect);
 		quad.write(0, {.bounds = contentRect_.as<int16_t>(), .textureSpan = texture, .rotation = rotation});
-		log.info("placed game rect at pixels {}:{}:{}:{}",
-			contentRect_.x, contentRect_.y, contentRect_.x2, contentRect_.y2);
+		//log.info("placed game rect at pixels {}:{}:{}:{}", contentRect_.x, contentRect_.y, contentRect_.x2, contentRect_.y2);
 	}
 	placeOverlay();
 }
@@ -203,7 +200,7 @@ void EmuVideoLayer::setFormat(EmuSystem &sys, IG::PixelFormat videoFmt, IG::Pixe
 	colSpace = colorSpace;
 	if(EmuSystem::canRenderRGBA8888 && colorSpace == Gfx::ColorSpace::SRGB)
 	{
-		videoFmt = IG::PIXEL_RGBA8888;
+		videoFmt = IG::PixelFmtRGBA8888;
 	}
 	if(!video.setRenderPixelFormat(sys, videoFmt, videoColorSpace(videoFmt)))
 	{
@@ -271,10 +268,10 @@ void EmuVideoLayer::setLinearFilter(bool on)
 		video.setSampler(samplerConfig());
 }
 
-void EmuVideoLayer::setBrightness(Gfx::Vec3 b)
+void EmuVideoLayer::updateBrightness()
 {
-	brightness = b;
-	brightnessSrgb = glm::convertSRGBToLinear(b);
+	brightness = brightnessUnscaled * brightnessScale;
+	brightnessSrgb = glm::convertSRGBToLinear(brightness);
 }
 
 void EmuVideoLayer::onVideoFormatChanged(IG::PixelFormat effectFmt)
@@ -337,7 +334,7 @@ bool EmuVideoLayer::updateConvertColorSpaceEffect()
 		&& userEffectId == ImageEffectId::DIRECT;
 	if(needsConversion && !userEffect)
 	{
-		userEffect = {renderer(), ImageEffectId::DIRECT, IG::PIXEL_RGBA8888, Gfx::ColorSpace::SRGB, samplerConfig(), video.size()};
+		userEffect = {renderer(), ImageEffectId::DIRECT, IG::PixelFmtRGBA8888, Gfx::ColorSpace::SRGB, samplerConfig(), video.size()};
 		log.info("made sRGB conversion effect");
 		buildEffectChain();
 		return true;
@@ -391,20 +388,55 @@ Gfx::ColorSpace EmuVideoLayer::videoColorSpace(IG::PixelFormat videoFmt) const
 
 Gfx::TextureSamplerConfig EmuVideoLayer::samplerConfig() const { return EmuVideo::samplerConfigForLinearFilter(useLinearFilter); }
 
-bool EmuVideoLayer::readConfig(MapIO &io, unsigned key, size_t size)
+static auto &channelBrightnessVal(ImageChannel ch, auto &brightnessUnscaled)
+{
+	switch(ch)
+	{
+		case ImageChannel::All: break;
+		case ImageChannel::Red: return brightnessUnscaled.r;
+		case ImageChannel::Green: return brightnessUnscaled.g;
+		case ImageChannel::Blue: return brightnessUnscaled.b;
+	}
+	bug_unreachable("invalid ImageChannel");
+}
+
+float EmuVideoLayer::channelBrightness(ImageChannel ch) const
+{
+	return channelBrightnessVal(ch, brightnessUnscaled);
+}
+
+void EmuVideoLayer::setBrightness(float brightness, ImageChannel ch)
+{
+	if(ch == ImageChannel::All)
+	{
+		brightnessUnscaled.r = brightnessUnscaled.g = brightnessUnscaled.b = brightness;
+	}
+	else
+	{
+		channelBrightnessVal(ch, brightnessUnscaled) = brightness;
+	}
+	updateBrightness();
+}
+
+bool EmuVideoLayer::readConfig(MapIO &io, unsigned key)
 {
 	switch(key)
 	{
 		default: return false;
-		case CFGKEY_GAME_IMG_FILTER: return readOptionValue(io, size, useLinearFilter);
-		case CFGKEY_IMAGE_EFFECT: return readOptionValue(io, size, userEffectId, [](auto m){return m <= lastEnum<ImageEffectId>;});
-		case CFGKEY_OVERLAY_EFFECT: return readOptionValue(io, size, userOverlayEffectId, [](auto m){return m <= lastEnum<ImageOverlayId>;});
-		case CFGKEY_OVERLAY_EFFECT_LEVEL: return readOptionValue<int8_t>(io, size, [&](auto i){if(i >= 0 && i <= 100) setOverlayIntensity(i / 100.f); });
+		case CFGKEY_CONTENT_SCALE: return readOptionValue(io, scale);
+		case CFGKEY_VIDEO_BRIGHTNESS: return readOptionValue(io, brightnessUnscaled);
+		case CFGKEY_GAME_IMG_FILTER: return readOptionValue(io, useLinearFilter);
+		case CFGKEY_IMAGE_EFFECT: return readOptionValue(io, userEffectId, [](auto m){return m <= lastEnum<ImageEffectId>;});
+		case CFGKEY_OVERLAY_EFFECT: return readOptionValue(io, userOverlayEffectId, [](auto m){return m <= lastEnum<ImageOverlayId>;});
+		case CFGKEY_OVERLAY_EFFECT_LEVEL: return readOptionValue<int8_t>(io, [&](auto i){if(i >= 0 && i <= 100) setOverlayIntensity(i / 100.f); });
 	}
 }
 
 void EmuVideoLayer::writeConfig(FileIO &io) const
 {
+	writeOptionValueIfNotDefault(io, scale);
+	if(brightnessUnscaled != Gfx::Vec3{1.f, 1.f, 1.f})
+		writeOptionValue(io, CFGKEY_VIDEO_BRIGHTNESS, brightnessUnscaled);
 	writeOptionValueIfNotDefault(io, CFGKEY_GAME_IMG_FILTER, useLinearFilter, true);
 	writeOptionValueIfNotDefault(io, CFGKEY_IMAGE_EFFECT, userEffectId, ImageEffectId{});
 	writeOptionValueIfNotDefault(io, CFGKEY_OVERLAY_EFFECT, userOverlayEffectId, ImageOverlayId{});

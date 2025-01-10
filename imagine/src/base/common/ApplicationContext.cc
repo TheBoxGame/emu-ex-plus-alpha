@@ -227,16 +227,16 @@ FS::RootPathInfo ApplicationContext::rootPathInfo(std::string_view path) const
 	return nearestPtr->root.info;
 }
 
-AssetIO ApplicationContext::openAsset(CStringView name, IOAccessHint hint, OpenFlags openFlags, const char *appName) const
+AssetIO ApplicationContext::openAsset(CStringView name, OpenFlags openFlags, [[maybe_unused]] const char* appName) const
 {
 	#ifdef __ANDROID__
-	return {*this, name, hint, openFlags};
+	return {*this, name, openFlags};
 	#else
-	return {FS::pathString(assetPath(appName), name), hint, openFlags};
+	return {FS::pathString(assetPath(appName), name), openFlags};
 	#endif
 }
 
-FS::AssetDirectoryIterator ApplicationContext::openAssetDirectory(CStringView path, const char *appName)
+FS::AssetDirectoryIterator ApplicationContext::openAssetDirectory(CStringView path, [[maybe_unused]] const char* appName)
 {
 	#ifdef __ANDROID__
 	return {aAssetManager(), path};
@@ -247,22 +247,17 @@ FS::AssetDirectoryIterator ApplicationContext::openAssetDirectory(CStringView pa
 
 [[gnu::weak]] bool ApplicationContext::hasSystemPathPicker() const { return false; }
 
-[[gnu::weak]] bool ApplicationContext::showSystemPathPicker(SystemDocumentPickerDelegate) { return false; }
+[[gnu::weak]] bool ApplicationContext::showSystemPathPicker() { return false; }
 
 [[gnu::weak]] bool ApplicationContext::hasSystemDocumentPicker() const { return false; }
 
-[[gnu::weak]] bool ApplicationContext::showSystemDocumentPicker(SystemDocumentPickerDelegate) { return false; }
+[[gnu::weak]] bool ApplicationContext::showSystemDocumentPicker() { return false; }
 
-[[gnu::weak]] bool ApplicationContext::showSystemCreateDocumentPicker(SystemDocumentPickerDelegate) { return false; }
+[[gnu::weak]] bool ApplicationContext::showSystemCreateDocumentPicker() { return false; }
 
-[[gnu::weak]] FileIO ApplicationContext::openFileUri(CStringView uri, IOAccessHint access, OpenFlags openFlags) const
+[[gnu::weak]] FileIO ApplicationContext::openFileUri(CStringView uri, OpenFlags openFlags) const
 {
-	return {uri, access, openFlags};
-}
-
-FileIO ApplicationContext::openFileUri(CStringView uri, OpenFlags openFlags) const
-{
-	return openFileUri(uri, IOAccessHint::Normal, openFlags);
+	return {uri, openFlags};
 }
 
 [[gnu::weak]] UniqueFileDescriptor ApplicationContext::openFileUriFd(CStringView uri, OpenFlags openFlags) const
@@ -288,6 +283,11 @@ FileIO ApplicationContext::openFileUri(CStringView uri, OpenFlags openFlags) con
 [[gnu::weak]] FS::FileString ApplicationContext::fileUriDisplayName(CStringView uri) const
 {
 	return FS::displayName(uri);
+}
+
+[[gnu::weak]] FS::file_type ApplicationContext::fileUriType(CStringView uri) const
+{
+	return FS::status(uri).type();
 }
 
 [[gnu::weak]] bool ApplicationContext::removeFileUri(CStringView uri) const
@@ -321,12 +321,9 @@ const InputDeviceContainer &ApplicationContext::inputDevices() const
 	return application().inputDevices();
 }
 
-Input::Device *ApplicationContext::inputDevice(std::string_view name, int enumId) const
+Input::Device* ApplicationContext::inputDevice(std::string_view name, int enumId) const
 {
-	auto it = std::ranges::find_if(inputDevices(), [&](auto &devPtr){ return devPtr->name() == name; });
-	if(it == inputDevices().end())
-		return {};
-	return it->get();
+	return findPtr(inputDevices(), [&](auto &devPtr){ return devPtr->enumId() == enumId && devPtr->name() == name; });
 }
 
 void ApplicationContext::setHintKeyRepeat(bool on)
@@ -381,13 +378,13 @@ void ApplicationContext::setSwappedConfirmKeys(std::optional<bool> opt)
 
 [[gnu::weak]] bool ApplicationContext::usesPermission(Permission) const { return false; }
 
-[[gnu::weak]] bool ApplicationContext::permissionIsRestricted(Permission p) const { return false; }
+[[gnu::weak]] bool ApplicationContext::permissionIsRestricted(Permission) const { return false; }
 
 [[gnu::weak]] bool ApplicationContext::requestPermission(Permission) { return false; }
 
-[[gnu::weak]] void ApplicationContext::addNotification(CStringView onShow, CStringView title, CStringView message) {}
+[[gnu::weak]] void ApplicationContext::addNotification(CStringView, CStringView, CStringView) {}
 
-[[gnu::weak]] void ApplicationContext::addLauncherIcon(CStringView name, CStringView path) {}
+[[gnu::weak]] void ApplicationContext::addLauncherIcon(CStringView, CStringView) {}
 
 [[gnu::weak]] bool VibrationManager::hasVibrator() const { return false; }
 
@@ -404,14 +401,14 @@ void ApplicationContext::setSwappedConfirmKeys(std::optional<bool> opt)
 	#endif
 }
 
-[[gnu::weak]] int ApplicationContext::maxCPUFrequencyKHz(int cpuIdx) const
+[[gnu::weak]] int ApplicationContext::maxCPUFrequencyKHz([[maybe_unused]] int cpuIdx) const
 {
 	#ifdef __linux__
 	auto maxFreqFile = UniqueFileStream{fopen(std::format("/sys/devices/system/cpu/cpu{}/cpufreq/cpuinfo_max_freq", cpuIdx).c_str(), "r")};
 	if(!maxFreqFile)
 		return 0;
 	int freq{};
-	auto items = fscanf(maxFreqFile.get(), "%d", &freq);
+	[[maybe_unused]] auto items = fscanf(maxFreqFile.get(), "%d", &freq);
 	return freq;
 	#else
 	return 0;
@@ -446,7 +443,7 @@ void ApplicationContext::setSwappedConfirmKeys(std::optional<bool> opt)
 
 [[gnu::weak]] PerformanceHintManager ApplicationContext::performanceHintManager() { return {}; }
 
-[[gnu::weak]] bool ApplicationContext::packageIsInstalled(CStringView name) const { return false; }
+[[gnu::weak]] bool ApplicationContext::packageIsInstalled(CStringView) const { return false; }
 
 [[gnu::weak]] int32_t ApplicationContext::androidSDK() const
 {
@@ -454,7 +451,7 @@ void ApplicationContext::setSwappedConfirmKeys(std::optional<bool> opt)
 }
 
 [[gnu::weak]] bool ApplicationContext::hasSustainedPerformanceMode() const { return false; }
-[[gnu::weak]] void ApplicationContext::setSustainedPerformanceMode(bool on) {}
+[[gnu::weak]] void ApplicationContext::setSustainedPerformanceMode(bool) {}
 
 [[gnu::weak]] std::string ApplicationContext::formatDateAndTime(WallClockTimePoint time)
 {
@@ -540,14 +537,14 @@ ssize_t writeToUri(ApplicationContext ctx, CStringView uri, std::span<const unsi
 ssize_t readFromUri(ApplicationContext ctx, CStringView uri, std::span<unsigned char> dest,
 	IOAccessHint accessHint)
 {
-	auto f = ctx.openFileUri(uri, accessHint, {.test = true});
+	auto f = ctx.openFileUri(uri, {.test = true, .accessHint = accessHint});
 	return f.read(dest).bytes;
 }
 
 std::pair<ssize_t, FS::PathString> readFromUriWithArchiveScan(ApplicationContext ctx, CStringView uri,
 	std::span<unsigned char> dest, bool(*nameMatchFunc)(std::string_view), IOAccessHint accessHint)
 {
-	auto io = ctx.openFileUri(uri, accessHint);
+	auto io = ctx.openFileUri(uri, {.accessHint = accessHint});
 	if(FS::hasArchiveExtension(uri))
 	{
 		for(auto &entry : FS::ArchiveIterator{std::move(io)})
@@ -575,7 +572,8 @@ IOBuffer bufferFromUri(ApplicationContext ctx, CStringView uri, OpenFlags openFl
 {
 	if(!sizeLimit) [[unlikely]]
 		return {};
-	auto file = ctx.openFileUri(uri, IOAccessHint::All, openFlags);
+	openFlags.accessHint = IOAccessHint::All;
+	auto file = ctx.openFileUri(uri, openFlags);
 	if(!file)
 		return {};
 	else if(file.size() > sizeLimit)
@@ -592,7 +590,8 @@ IOBuffer rwBufferFromUri(ApplicationContext ctx, CStringView uri, OpenFlags extr
 {
 	if(!size) [[unlikely]]
 		return {};
-	auto file = ctx.openFileUri(uri, IOAccessHint::Random, OpenFlags::createFile() | extraOFlags);
+	extraOFlags.accessHint = IOAccessHint::Random;
+	auto file = ctx.openFileUri(uri, OpenFlags::createFile() | extraOFlags);
 	if(!file) [[unlikely]]
 		return {};
 	auto fileSize = file.size();

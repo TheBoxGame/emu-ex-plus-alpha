@@ -78,7 +78,7 @@ ArchiveIO &ArchiveIO::operator=(ArchiveIO &&) noexcept = default;
 
 ArchiveIO::ArchiveIO(CStringView path)
 {
-	init(FileIO{path, IOAccessHint::Sequential});
+	init(FileIO{path, {.accessHint = IOAccessHint::Sequential}});
 }
 
 ArchiveIO::ArchiveIO(FileIO io) { init(std::move(io)); }
@@ -273,7 +273,7 @@ ssize_t ArchiveIO::read(void *buff, size_t bytes, std::optional<off_t> offset)
 	}
 }
 
-ssize_t ArchiveIO::write(const void* buff, size_t bytes, std::optional<off_t> offset)
+ssize_t ArchiveIO::write(const void*, size_t, std::optional<off_t>)
 {
 	return -1;
 }

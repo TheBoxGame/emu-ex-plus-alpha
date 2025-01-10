@@ -16,6 +16,7 @@
 #include "AutosaveSlotView.hh"
 #include <emuframework/EmuApp.hh>
 #include <imagine/gui/AlertView.hh>
+#include <emuframework/viewUtils.hh>
 #include <format>
 
 namespace EmuEx
@@ -23,7 +24,7 @@ namespace EmuEx
 
 using SlotTextMenuItem = AutosaveSlotView::SlotTextMenuItem;
 
-class ManageAutosavesView : public TableView, public EmuAppHelper<ManageAutosavesView>
+class ManageAutosavesView : public TableView, public EmuAppHelper
 {
 public:
 	ManageAutosavesView(ViewAttachParams, AutosaveSlotView &srcView,
@@ -36,7 +37,7 @@ private:
 	std::vector<SlotTextMenuItem> extraSlotItems;
 };
 
-class EditAutosaveView : public TableView, public EmuAppHelper<EditAutosaveView>
+class EditAutosaveView : public TableView, public EmuAppHelper
 {
 public:
 	EditAutosaveView(ViewAttachParams attach, ManageAutosavesView &srcView_, std::string_view slotName_):
@@ -48,18 +49,18 @@ public:
 			"Rename", attach,
 			[this](const Input::Event &e)
 			{
-				app().pushAndShowNewCollectValueInputView<const char*>(attachParams(), e,
+				pushAndShowNewCollectValueInputView<const char*>(attachParams(), e,
 					"Input name", slotName,
-					[this](EmuApp &app, auto str)
+					[this](CollectTextInputView &, auto str)
 					{
-						if(appContext().fileUriExists(app.system().contentLocalSaveDirectory(str)))
+						if(appContext().fileUriExists(system().contentLocalSaveDirectory(str)))
 						{
-							app.postErrorMessage("A save slot with that name already exists");
+							app().postErrorMessage("A save slot with that name already exists");
 							return false;
 						}
-						if(!app.autosaveManager().renameSlot(slotName, str))
+						if(!app().autosaveManager.renameSlot(slotName, str))
 						{
-							app.postErrorMessage("Error renaming save slot");
+							app().postErrorMessage("Error renaming save slot");
 							return false;
 						}
 						srcView.updateItem(slotName, str);
@@ -73,7 +74,7 @@ public:
 			"Delete", attach,
 			[this](const Input::Event &e)
 			{
-				if(slotName == app().autosaveManager().slotName())
+				if(slotName == app().autosaveManager.slotName())
 				{
 					app().postErrorMessage("Can't delete the currently active save slot");
 					return;
@@ -83,7 +84,7 @@ public:
 					{
 						.onYes = [this]
 						{
-							app().autosaveManager().deleteSlot(slotName);
+							app().autosaveManager.deleteSlot(slotName);
 							srcView.updateItem(slotName, "");
 							if(!srcView.hasItems())
 								srcView.dismiss();
@@ -118,7 +119,7 @@ ManageAutosavesView::ManageAutosavesView(ViewAttachParams attach, AutosaveSlotVi
 
 static std::string slotDescription(EmuApp &app, std::string_view saveName)
 {
-	auto desc = app.appContext().fileUriFormatLastWriteTimeLocal(app.autosaveManager().statePath(saveName));
+	auto desc = app.appContext().fileUriFormatLastWriteTimeLocal(app.autosaveManager.statePath(saveName));
 	if(desc.empty())
 		desc = "No saved state";
 	return desc;
@@ -148,21 +149,21 @@ AutosaveSlotView::AutosaveSlotView(ViewAttachParams attach):
 	{
 		"Create New Save Slot", attach, [this](const Input::Event &e)
 		{
-			app().pushAndShowNewCollectValueInputView<const char*>(attachParams(), e,
-				"Save Slot Name", "", [this](EmuApp &app, auto str_)
+			pushAndShowNewCollectValueInputView<const char*>(attachParams(), e,
+				"Save Slot Name", "", [this](CollectTextInputView &, auto str_)
 			{
 				std::string_view name{str_};
-				if(appContext().fileUriExists(app.system().contentLocalSaveDirectory(name)))
+				if(appContext().fileUriExists(app().system().contentLocalSaveDirectory(name)))
 				{
-					app.postErrorMessage("A save slot with that name already exists");
+					app().postErrorMessage("A save slot with that name already exists");
 					return false;
 				}
-				if(!app.autosaveManager().setSlot(name))
+				if(!app().autosaveManager.setSlot(name))
 				{
-					app.postErrorMessage("Error creating save slot");
+					app().postErrorMessage("Error creating save slot");
 					return false;
 				}
-				app.showEmulation();
+				app().showEmulation();
 				refreshItems();
 				return true;
 			});
@@ -193,14 +194,14 @@ void AutosaveSlotView::refreshSlots()
 		std::format("Main: {}", slotDescription(app(), "")),
 		attachParams(), [this]()
 		{
-			if(app().autosaveManager().setSlot(""))
+			if(app().autosaveManager.setSlot(""))
 			{
 				app().showEmulation();
 				refreshItems();
 			}
 		}
 	};
-	if(app().autosaveManager().slotName().empty())
+	if(app().autosaveManager.slotName().empty())
 		mainSlot.setHighlighted(true);
 	extraSlotItems.clear();
 	auto ctx = appContext();
@@ -212,13 +213,13 @@ void AutosaveSlotView::refreshSlots()
 		auto &item = extraSlotItems.emplace_back(e.name(), std::format("{}: {}", e.name(), slotDescription(app(), e.name())),
 			attachParams(), [this](TextMenuItem &item)
 		{
-			if(app().autosaveManager().setSlot(static_cast<SlotTextMenuItem&>(item).slotName))
+			if(app().autosaveManager.setSlot(static_cast<SlotTextMenuItem&>(item).slotName))
 			{
 				app().showEmulation();
 				refreshItems();
 			}
 		});
-		if(app().autosaveManager().slotName() == e.name())
+		if(app().autosaveManager.slotName() == e.name())
 			item.setHighlighted(true);
 		return true;
 	}, {.test = true});
@@ -227,14 +228,14 @@ void AutosaveSlotView::refreshSlots()
 		"No Save",
 		attachParams(), [this]()
 		{
-			if(app().autosaveManager().setSlot(noAutosaveName))
+			if(app().autosaveManager.setSlot(noAutosaveName))
 			{
 				app().showEmulation();
 				refreshItems();
 			}
 		}
 	};
-	if(app().autosaveManager().slotName() == noAutosaveName)
+	if(app().autosaveManager.slotName() == noAutosaveName)
 		noSaveSlot.setHighlighted(true);
 }
 

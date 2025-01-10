@@ -21,18 +21,27 @@
 #include <imagine/util/format.hh>
 #include <imagine/util/string.h>
 #include <imagine/util/zlib.hh>
-#include <vbam/gba/GBA.h>
-#include <vbam/gba/GBAGfx.h>
-#include <vbam/gba/Sound.h>
-#include <vbam/gba/RTC.h>
-#include <vbam/common/SoundDriver.h>
-#include <vbam/common/Patch.h>
-#include <vbam/Util.h>
+#include <imagine/logger/logger.h>
+#include <core/gba/gba.h>
+#include <core/gba/gbaGfx.h>
+#include <core/gba/gbaSound.h>
+#include <core/gba/gbaRtc.h>
+#include <core/gba/gbaEeprom.h>
+#include <core/gba/gbaFlash.h>
+#include <core/gba/gbaCheats.h>
+#include <core/base/sound_driver.h>
+#include <core/base/patch.h>
+#include <core/base/file_util.h>
 #include <sys/mman.h>
+
+bool patchApplyIPS(FILE* f, uint8_t** rom, int *size);
+bool patchApplyUPS(FILE* f, uint8_t** rom, int *size);
+bool patchApplyPPF(FILE* f, uint8_t** rom, int *size);
 
 namespace EmuEx
 {
 
+constexpr SystemLogger log{"GBA.emu"};
 const char *EmuSystem::creditsViewStr = CREDITS_INFO_STRING "(c) 2012-2024\nRobert Broglia\nwww.explusalpha.com\n\nPortions (c) the\nVBA-m Team\nvba-m.com";
 bool EmuSystem::hasBundledGames = true;
 bool EmuSystem::hasCheats = true;
@@ -126,12 +135,12 @@ void GbaSystem::onFlushBackupMemory(EmuApp &app, BackupMemoryDirtyFlags)
 	const ByteBuffer &saveData = eepromInUse ? eepromData : flashSaveMemory;
 	if(saveMemoryIsMappedFile)
 	{
-		logMsg("flushing backup memory");
+		log.info("flushing backup memory");
 		msync(saveData.data(), saveData.size(), MS_SYNC);
 	}
 	else
 	{
-		logMsg("saving backup memory");
+		log.info("saving backup memory");
 		saveFileIO.write(saveData.span(), 0);
 	}
 }
@@ -161,7 +170,7 @@ void GbaSystem::applyGamePatches(uint8_t *rom, int &romSize)
 	if(auto f = IG::FileUtils::fopenUri(ctx, userFilePath(patchesDir, ".ips"), "rb");
 		f)
 	{
-		logMsg("applying IPS patch:%s", userFilePath(patchesDir, ".ips").data());
+		log.info("applying IPS patch:{}", userFilePath(patchesDir, ".ips"));
 		if(!patchApplyIPS(f, &rom, &romSize))
 		{
 			throw std::runtime_error(std::format("Error applying IPS patch in:\n{}", patchesDir));
@@ -170,7 +179,7 @@ void GbaSystem::applyGamePatches(uint8_t *rom, int &romSize)
 	else if(auto f = IG::FileUtils::fopenUri(ctx, userFilePath(patchesDir, ".ups"), "rb");
 		f)
 	{
-		logMsg("applying UPS patch:%s", userFilePath(patchesDir, ".ups").data());
+		log.info("applying UPS patch:{}", userFilePath(patchesDir, ".ups"));
 		if(!patchApplyUPS(f, &rom, &romSize))
 		{
 			throw std::runtime_error(std::format("Error applying UPS patch in:\n{}", patchesDir));
@@ -179,7 +188,7 @@ void GbaSystem::applyGamePatches(uint8_t *rom, int &romSize)
 	else if(auto f = IG::FileUtils::fopenUri(ctx, userFilePath(patchesDir, ".ppf"), "rb");
 		f)
 	{
-		logMsg("applying UPS patch:%s", userFilePath(patchesDir, ".ppf").data());
+		log.info("applying UPS patch:{}", userFilePath(patchesDir, ".ppf"));
 		if(!patchApplyPPF(f, &rom, &romSize))
 		{
 			throw std::runtime_error(std::format("Error applying PPF patch in:\n{}", patchesDir));
@@ -196,10 +205,17 @@ void GbaSystem::loadContent(IO &io, EmuSystemCreateParams, OnLoadProgressDelegat
 	}
 	setGameSpecificSettings(gGba, size);
 	applyGamePatches(gGba.mem.rom, size);
-	CPUInit(gGba, 0, 0);
+	ByteBuffer biosRom;
+	if(shouldUseBios())
+	{
+		biosRom = appContext().openFileUri(biosPath, {.accessHint = IOAccessHint::All}).buffer(IOBufferMode::Release);
+		if(biosRom.size() != 0x4000)
+			throw std::runtime_error("BIOS size should be 16KB");
+	}
+	CPUInit(gGba, biosRom);
 	CPUReset(gGba);
 	saveStateSize = CPUWriteState(gGba, DynArray<uint8_t>{maxStateSize}.data());
-	readCheatFile(*this);
+	readCheatFile();
 }
 
 static void updateColorMap(auto &map, const PixelDesc &pxDesc)
@@ -215,10 +231,10 @@ static void updateColorMap(auto &map, const PixelDesc &pxDesc)
 
 bool GbaSystem::onVideoRenderFormatChange(EmuVideo &video, IG::PixelFormat fmt)
 {
-	logMsg("updating system color maps");
+	log.info("updating system color maps");
 	video.setFormat({lcdSize, fmt});
-	if(fmt == PIXEL_RGB565)
-		updateColorMap(systemColorMap.map16, PIXEL_DESC_RGB565);
+	if(fmt == PixelFmtRGB565)
+		updateColorMap(systemColorMap.map16, PixelDescRGB565);
 	else
 		updateColorMap(systemColorMap.map32, fmt.desc().nativeOrder());
 	return true;
@@ -237,7 +253,7 @@ void GbaSystem::runFrame(EmuSystemTaskContext taskCtx, EmuVideo *video, EmuAudio
 void GbaSystem::configAudioRate(FrameTime outputFrameTime, int outputRate)
 {
 	long mixRate = std::round(audioMixRate(outputRate, outputFrameTime));
-	logMsg("set sound mix rate:%ld", mixRate);
+	log.info("set sound mix rate:{}", mixRate);
 	soundSetSampleRate(gGba, mixRate);
 }
 
@@ -269,9 +285,9 @@ void systemDrawScreen(EmuEx::EmuSystemTaskContext taskCtx, EmuEx::EmuVideo &vide
 {
 	using namespace EmuEx;
 	auto img = video.startFrame(taskCtx);
-	IG::PixmapView framePix{{lcdSize, IG::PIXEL_RGB565}, gGba.lcd.pix};
+	IG::PixmapView framePix{{lcdSize, IG::PixelFmtRGB565}, gGba.lcd.pix};
 	assumeExpr(img.pixmap().size() == framePix.size());
-	if(img.pixmap().format() == IG::PIXEL_FMT_RGB565)
+	if(img.pixmap().format() == IG::PixelFmtRGB565)
 	{
 		img.pixmap().writeTransformed([](uint16_t p){ return systemColorMap.map16[p]; }, framePix);
 	}
@@ -288,7 +304,7 @@ void systemOnWriteDataToSoundBuffer(EmuEx::EmuAudio *audio, const uint16_t *fina
 	if(audio)
 	{
 		int frames = length >> 1; // stereo samples
-		//logMsg("%d audio frames", frames);
+		//log.debug("{} audio frames", frames);
 		audio->writeFrames(finalWave, frames);
 	}
 }

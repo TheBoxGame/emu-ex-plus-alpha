@@ -28,6 +28,24 @@ namespace IG
 
 constexpr SystemLogger log{"View"};
 
+void ViewI::prepareDraw() {}
+
+bool ViewI::inputEvent(const Input::Event&, ViewInputEventParams) { return false; }
+
+void ViewI::clearSelection() {}
+
+void ViewI::onShow() {}
+
+void ViewI::onHide() {}
+
+void ViewI::onAddedToController(ViewController *, const Input::Event &) {}
+
+void ViewI::setFocus(bool) {}
+
+std::u16string_view ViewI::name() const { return u""; }
+
+bool ViewI::onDocumentPicked(const DocumentPickerEvent&) { return false; }
+
 Gfx::Renderer &ViewAttachParams::renderer() const
 {
 	return rendererTask.renderer();
@@ -59,7 +77,7 @@ void ViewController::popAndShow()
 	dismissView(-1);
 }
 
-void ViewController::popTo(View &v)
+void ViewController::popTo(View&)
 {
 	log.error("popTo() not implemented for this controller");
 }
@@ -73,6 +91,8 @@ bool ViewController::moveFocusToNextView(const Input::Event &, _2DOrigin)
 {
 	return false;
 };
+
+View* ViewController::parentView(View&) { return {}; }
 
 std::optional<bool> ViewManager::needsBackControlOption() const
 {
@@ -121,6 +141,8 @@ void View::popTo(View &v)
 	controller_->popTo(v);
 }
 
+void View::popTo() { popTo(*this); }
+
 void View::dismiss(bool refreshLayout)
 {
 	if(controller_)
@@ -159,18 +181,6 @@ int View::navBarHeight(const Gfx::GlyphTextureSet &face)
 	return makeEvenRoundedUp(int(face.nominalHeight() * 1.75f));
 }
 
-void View::clearSelection() {}
-
-void View::onShow() {}
-
-void View::onHide() {}
-
-void View::onAddedToController(ViewController *, const Input::Event &) {}
-
-void View::prepareDraw() {}
-
-void View::setFocus(bool) {}
-
 void View::setViewRect(WindowRect viewRect, WindowRect displayRect)
 {
 	this->viewRect_ = viewRect;
@@ -206,11 +216,6 @@ Gfx::RendererTask &View::rendererTask() const
 	return *rendererTask_;
 }
 
-ViewManager &View::manager()
-{
-	return *manager_;
-}
-
 ViewAttachParams View::attachParams() const
 {
 	return {*manager_, *win, *rendererTask_};
@@ -226,9 +231,10 @@ ApplicationContext View::appContext() const
 	return window().appContext();
 }
 
-std::u16string_view View::name() const
+bool View::onDocumentPicked(const DocumentPickerEvent& e)
 {
-	return u"";
+	auto vPtr = parentView();
+	return vPtr ? vPtr->onDocumentPicked(e) : false;
 }
 
 std::u16string View::nameString(const MenuItem &item)
@@ -248,6 +254,13 @@ bool View::moveFocusToNextView(const Input::Event &e, _2DOrigin direction)
 	if(!controller_)
 		return false;
 	return controller_->moveFocusToNextView(e, direction);
+}
+
+View* View::parentView()
+{
+	if(!controller_)
+		return {};
+	return controller_->parentView(*this);
 }
 
 void View::setWindow(Window *w)

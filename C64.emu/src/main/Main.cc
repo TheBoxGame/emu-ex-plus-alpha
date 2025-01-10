@@ -22,6 +22,7 @@
 #include <imagine/util/string.h>
 #include <imagine/util/span.hh>
 #include <sys/time.h>
+#include <imagine/logger/logger.h>
 
 extern "C"
 {
@@ -30,7 +31,6 @@ extern "C"
 	#include "drive.h"
 	#include "lib.h"
 	#include "util.h"
-	#include "ioutil.h"
 	#include "uiapi.h"
 	#include "console.h"
 	#include "monitor.h"
@@ -66,7 +66,7 @@ extern "C"
 namespace EmuEx
 {
 
-constexpr SystemLogger log{"main"};
+constexpr SystemLogger log{"C64.emu"};
 const char *EmuSystem::creditsViewStr = CREDITS_INFO_STRING "(c) 2013-2024\nRobert Broglia\nwww.explusalpha.com\n\nPortions (c) the\nVice Team\nvice-emu.sourceforge.io";
 bool EmuSystem::hasPALVideoSystem = true;
 bool EmuSystem::hasResetModes = true;
@@ -78,7 +78,26 @@ bool EmuApp::needsGlobalInstance = true;
 C64App::C64App(ApplicationInitParams initParams, ApplicationContext &ctx):
 	EmuApp{initParams, ctx}, c64System{ctx}
 {
-	audio().setStereo(false);
+	audio.setStereo(false);
+}
+
+C64System::C64System(ApplicationContext ctx):
+	EmuSystem{ctx}
+{
+	makeDetachedThread(
+		[this]()
+		{
+			emuThreadId = thisThreadId();
+			execSem.acquire();
+			log.info("starting maincpu_mainloop()");
+			plugin.maincpu_mainloop();
+		});
+
+	if(sysFilePath.size() == 3)
+	{
+		sysFilePath[1] = "~/.local/share/C64.emu";
+		sysFilePath[2] = "/usr/share/games/vice";
+	}
 }
 
 const char *EmuSystem::shortSystemName() const
@@ -93,18 +112,14 @@ const char *EmuSystem::systemName() const
 
 void C64System::setModel(int model)
 {
-	logMsg("setting model id:%d", model);
+	log.info("setting model id:{}", model);
+	enterCPUTrap();
 	plugin.model_set(model);
 }
 
-int C64System::sysModel() const
+int C64System::model() const
 {
 	return plugin.model_get();
-}
-
-void C64System::setSysModel(int model)
-{
-	setModel(model);
 }
 
 const char *C64System::videoChipStr() const
@@ -149,45 +164,6 @@ bool C64System::currSystemIsC64() const
 bool C64System::currSystemIsC64Or128() const
 {
 	return currSystemIsC64() || currSystem == ViceSystem::C128;
-}
-
-void C64System::setRuntimeReuSize(int size)
-{
-	 // REU may be in use mid-frame so use a trap & wait 2 frames
-	struct ReuTrapData
-	{
-		C64System &sys;
-		int size;
-	};
-	ReuTrapData reuData{*this, size};
-	plugin.interrupt_maincpu_trigger_trap(
-		[](uint16_t, void *data)
-		{
-			auto &reuData = *(ReuTrapData*)data;
-			if(reuData.size)
-			{
-				logMsg("enabling REU size:%d", reuData.size);
-				reuData.sys.setIntResource("REUsize", reuData.size);
-				reuData.sys.setIntResource("REU", 1);
-			}
-			else
-			{
-				logMsg("disabling REU");
-				reuData.sys.setIntResource("REU", 0);
-			}
-		}, (void*)&reuData);
-	execC64Frame();
-	execC64Frame();
-}
-
-void C64System::applyInitialOptionResources()
-{
-	setIntResource("JoyPort1Device", JOYPORT_ID_JOYSTICK);
-	setIntResource("JoyPort2Device", JOYPORT_ID_JOYSTICK);
-	applySessionOptions();
-	setBorderMode(optionBorderMode);
-	setSidEngine(optionSidEngine);
-	setReSidSampling(optionReSidSampling);
 }
 
 int systemCartType(ViceSystem system)
@@ -236,7 +212,7 @@ EmuSystem::NameFilterFunc EmuSystem::defaultFsFilter = hasC64Extension;
 void C64System::reset(EmuApp &, ResetMode mode)
 {
 	assert(hasContent());
-	plugin.machine_trigger_reset(mode == ResetMode::HARD ? MACHINE_RESET_MODE_HARD : MACHINE_RESET_MODE_SOFT);
+	plugin.machine_trigger_reset(mode == ResetMode::HARD ? MACHINE_RESET_MODE_POWER_CYCLE : MACHINE_RESET_MODE_RESET_CPU);
 }
 
 FS::FileString C64System::stateFilename(int slot, std::string_view name) const
@@ -244,16 +220,31 @@ FS::FileString C64System::stateFilename(int slot, std::string_view name) const
 	return IG::format<FS::FileString>("{}.{}.vsf", name, saveSlotChar(slot));
 }
 
-struct SnapshotTrapData
+void C64System::enterCPUTrap()
 {
-	const VicePlugin &plugin;
+	assert(emuThreadId);
+	if(inCPUTrap)
+		return;
+	plugin.interrupt_maincpu_trigger_trap([](uint16_t, void *data)
+	{
+		auto &sys = *((C64System*)data);
+		sys.inCPUTrap = true;
+		sys.signalEmuTaskThreadAndWait();
+		sys.inCPUTrap = false;
+	}, (void*)this);
+	while(!inCPUTrap)
+	{
+		signalViceThreadAndWait();
+	}
+}
+
+struct SnapshotData
+{
 	uint8_t *buffData{};
 	size_t buffSize{};
-	bool hasError{};
-	bool ranTrap{};
 };
 
-static std::array<char, 32> snapshotVPath(SnapshotTrapData &data)
+static std::array<char, 32> snapshotVPath(SnapshotData &data)
 {
 	std::array<char, 32> fileStr;
 	// Encode the data/size pointers after the string null terminator
@@ -273,66 +264,57 @@ static std::array<char, 32> snapshotVPath(SnapshotTrapData &data)
 	return fileStr;
 }
 
-static void loadSnapshotTrap(uint16_t, void *data)
+static bool saveSnapshot(auto &plugin, SnapshotData &snapData)
 {
-	auto &snapData = *((SnapshotTrapData*)data);
+	//log.info("saving state at:{} size:{}", (void*)snapData.buffData, snapData.buffSize);
+	if(auto err = plugin.machine_write_snapshot(snapshotVPath(snapData).data(), 1, 1, 0);
+		err < 0)
+	{
+		log.error("error writing snapshot:{}", err);
+		return false;
+	}
+	return true;
+}
+
+static bool loadSnapshot(auto &plugin, SnapshotData &snapData)
+{
 	assumeExpr(snapData.buffData);
 	log.info("loading state at:{} size:{}", (void*)snapData.buffData, snapData.buffSize);
-	if(snapData.plugin.machine_read_snapshot(snapshotVPath(snapData).data(), 0) < 0)
-		snapData.hasError = true;
-	else
-		snapData.hasError = false;
-	snapData.ranTrap = true;
-}
-
-static void saveSnapshotTrap(uint16_t, void *data)
-{
-	auto &snapData = *((SnapshotTrapData*)data);
-	//log.info("saving state at:{} size:{}", (void*)snapData.buffData, snapData.buffSize);
-	if(snapData.plugin.machine_write_snapshot(snapshotVPath(snapData).data(), 1, 1, 0) < 0)
-		snapData.hasError = true;
-	else
-		snapData.hasError = false;
-	snapData.ranTrap = true;
-}
-
-static void runTrap(C64System &sys, auto trapFunc, SnapshotTrapData &snapData)
-{
-	sys.plugin.interrupt_maincpu_trigger_trap(trapFunc, (void*)&snapData);
-	for(auto i : iotaCount(15))
-	{
-		sys.execC64Frame(); // execute cpu trap
-		if(snapData.ranTrap)
-			break;
-	}
+	if(plugin.machine_read_snapshot(snapshotVPath(snapData).data(), 0) < 0)
+		return false;
+	return true;
 }
 
 size_t C64System::stateSize()
 {
-	SnapshotTrapData data{.plugin{plugin}};
-	runTrap(*this, saveSnapshotTrap, data);
-	assert(!data.hasError);
+	enterCPUTrap();
+	SnapshotData data{};
+	saveSnapshot(plugin, data);
 	return data.buffSize;
 }
 
 void C64System::readState(EmuApp &app, std::span<uint8_t> buff)
 {
+	signalViceThreadAndWait();
+	enterCPUTrap();
 	plugin.vsync_set_warp_mode(0);
-	SnapshotTrapData data{.plugin{plugin}, .buffData = buff.data(), .buffSize = buff.size()};
-	runTrap(*this, loadSnapshotTrap, data); // execute cpu trap, snapshot load may cause reboot from a C64 model change
-	if(data.hasError)
+	SnapshotData data{.buffData = buff.data(), .buffSize = buff.size()};
+	if(!loadSnapshot(plugin, data))
 		throw std::runtime_error("Invalid state data");
-	// reload snapshot in case last load caused a reboot
-	runTrap(*this, loadSnapshotTrap, data);
-	if(data.hasError)
+	// reload snapshot in case last load caused a reboot due to model change
+	signalViceThreadAndWait();
+	enterCPUTrap();
+	if(!loadSnapshot(plugin, data))
 		throw std::runtime_error("Invalid state data");
+	updateJoystickDevices();
 }
 
 size_t C64System::writeState(std::span<uint8_t> buff, SaveStateFlags flags)
 {
-	SnapshotTrapData data{.plugin{plugin}, .buffData = buff.data(), .buffSize = buff.size()};
-	runTrap(*this, saveSnapshotTrap, data);
-	assert(!data.hasError);
+	enterCPUTrap();
+	SnapshotData data{.buffData = buff.data(), .buffSize = buff.size()};
+	if(!saveSnapshot(plugin, data))
+		return 0;
 	return data.buffSize;
 }
 
@@ -349,22 +331,15 @@ VideoSystem C64System::videoSystem() const
 
 void C64System::closeSystem()
 {
-	if(!hasContent())
-	{
-		return;
-	}
+	enterCPUTrap();
+	plugin.machine_trigger_reset(MACHINE_RESET_MODE_POWER_CYCLE);
 	plugin.vsync_set_warp_mode(0);
-	if(intResource("REU"))
-	{
-		setRuntimeReuSize(0);
-	}
 	plugin.tape_image_detach(1);
 	plugin.file_system_detach_disk(8, 0);
 	plugin.file_system_detach_disk(9, 0);
 	plugin.file_system_detach_disk(10, 0);
 	plugin.file_system_detach_disk(11, 0);
 	plugin.cartridge_detach_image(-1);
-	plugin.machine_trigger_reset(MACHINE_RESET_MODE_HARD);
 }
 
 static bool hasSysFilePath(ApplicationContext ctx, const auto &paths)
@@ -383,10 +358,10 @@ void C64System::initC64(EmuApp &app)
 		return;
 	if(!hasSysFilePath(appContext(), sysFilePath))
 		throw std::runtime_error{"Missing system file path, please check Options➔File Paths➔VICE System Files"};
-	logMsg("initializing C64");
+	log.info("initializing C64");
   if(plugin.init_main() < 0)
   {
-  	logErr("error in init_main()");
+  	log.error("error in init_main()");
   	c64FailedInit = true;
   	throw std::runtime_error{std::format("Missing system file {}, please check Options➔File Paths➔VICE System Files", lastMissingSysFile)};
 	}
@@ -429,10 +404,10 @@ static FS::PathString vic20ExtraCartPath(ApplicationContext ctx, std::string_vie
 	bool addrCharIsUpper = addrSuffixChar == 'A' || addrSuffixChar == 'B';
 	for(auto c : std::array{'2', '4', '6', 'a', 'b'}) // looks for a matching file with a valid memory address suffix
 	{
-		if(c == tolower(addrSuffixChar))
+		if(c == toLower(addrSuffixChar))
 			continue; // skip original filename
 		FS::FileString cartName{baseCartName};
-		cartName[addrSuffixOffset] = addrCharIsUpper ? toupper(c) : c;
+		cartName[addrSuffixOffset] = addrCharIsUpper ? toUpper(c) : c;
 		auto cartPath = FS::uriString(searchPath, cartName);
 		if(ctx.fileUriExists(cartPath))
 		{
@@ -449,7 +424,7 @@ void C64System::tryLoadingSplitVic20Cart()
 	auto extraCartPath = vic20ExtraCartPath(appContext(), contentFileName(), contentDirectory());
 	if(extraCartPath.size())
 	{
-		logMsg("loading extra cart image:%s", extraCartPath.data());
+		log.info("loading extra cart image:{}", extraCartPath);
 		if(plugin.cartridge_attach_image(CARTRIDGE_VIC20_DETECT, extraCartPath.data()) != 0)
 		{
 			EmuSystem::throwFileReadError();
@@ -459,12 +434,10 @@ void C64System::tryLoadingSplitVic20Cart()
 
 void C64System::loadContent(IO &, EmuSystemCreateParams params, OnLoadProgressDelegate)
 {
-	initC64(EmuApp::get(appContext()));
-	applyInitialOptionResources();
 	bool shouldAutostart = !(params.systemFlags & SYSTEM_FLAG_NO_AUTOSTART) && optionAutostartOnLaunch;
 	if(shouldAutostart && plugin.autostart_autodetect_)
 	{
-		logMsg("loading & autostarting:%s", contentLocation().data());
+		log.info("loading & autostarting:{}", contentLocation());
 		if(endsWithAnyCaseless(contentFileName(), ".prg"))
 		{
 			// needed to store AutostartPrgDisk.d64
@@ -487,7 +460,7 @@ void C64System::loadContent(IO &, EmuSystemCreateParams params, OnLoadProgressDe
 	{
 		if(hasC64DiskExtension(contentFileName()))
 		{
-			logMsg("loading disk image:%s", contentLocation().data());
+			log.info("loading disk image:{}", contentLocation());
 			if(plugin.file_system_attach_disk(8, 0, contentLocation().data()) != 0)
 			{
 				EmuSystem::throwFileReadError();
@@ -495,7 +468,7 @@ void C64System::loadContent(IO &, EmuSystemCreateParams params, OnLoadProgressDe
 		}
 		else if(hasC64TapeExtension(contentFileName()))
 		{
-			logMsg("loading tape image:%s", contentLocation().data());
+			log.info("loading tape image:{}", contentLocation());
 			if(plugin.tape_image_attach(1, contentLocation().data()) != 0)
 			{
 				EmuSystem::throwFileReadError();
@@ -503,7 +476,7 @@ void C64System::loadContent(IO &, EmuSystemCreateParams params, OnLoadProgressDe
 		}
 		else // cart
 		{
-			logMsg("loading cart image:%s", contentLocation().data());
+			log.info("loading cart image:{}", contentLocation());
 			if(plugin.cartridge_attach_image(systemCartType(currSystem), contentLocation().data()) != 0)
 			{
 				EmuSystem::throwFileReadError();
@@ -518,19 +491,11 @@ void C64System::loadContent(IO &, EmuSystemCreateParams params, OnLoadProgressDe
 	}
 }
 
-void C64System::execC64Frame()
-{
-	startCanvasRunningFrame();
-	// signal C64 thread to execute one frame and wait for it to finish
-	execSem.release();
-	execDoneSem.acquire();
-}
-
 void C64System::runFrame(EmuSystemTaskContext taskCtx, EmuVideo *video, EmuAudio *audio)
 {
 	audioPtr = audio;
 	setCanvasSkipFrame(!video);
-	execC64Frame();
+	signalViceThreadAndWait();
 	if(video)
 	{
 		video->startFrameWithAltFormat(taskCtx, canvasSrcPix);
@@ -546,11 +511,10 @@ void C64System::renderFramebuffer(EmuVideo &video)
 void C64System::configAudioRate(FrameTime outputFrameTime, int outputRate)
 {
 	int mixRate = std::round(audioMixRate(outputRate, systemFrameRate, outputFrameTime));
-	int currRate = 0;
-	plugin.resources_get_int("SoundSampleRate", &currRate);
+	int currRate = intResource("SoundSampleRate");
 	if(currRate == mixRate)
 		return;
-	logMsg("set sound mix rate:%d", mixRate);
+	log.info("set sound mix rate:{}", mixRate);
 	setIntResource("SoundSampleRate", mixRate);
 }
 
@@ -571,27 +535,15 @@ void EmuApp::onCustomizeNavView(EmuApp::NavView &view)
 	view.setBackgroundGradient(navViewGrad);
 }
 
-static FS::PathString autostartPrgDiskImagePath(EmuSystem &sys)
-{
-	return FS::pathString(sys.fallbackSaveDirectory(), "AutostartPrgDisk.d64");
-}
-
 void EmuApp::onMainWindowCreated(ViewAttachParams attach, const Input::Event &e)
 {
-	auto &sys = static_cast<C64System&>(system());
-	sys.plugin.init();
 	inputManager.updateKeyboardMapping();
-	sys.setSysModel(sys.optionDefaultModel);
-	auto ctx = attach.appContext();
-	auto prgDiskPath = autostartPrgDiskImagePath(system());
-	FS::remove(prgDiskPath);
-	sys.plugin.resources_set_string("AutostartPrgDiskImage", prgDiskPath.data());
 }
 
 bool C64System::onVideoRenderFormatChange(EmuVideo &, IG::PixelFormat fmt)
 {
-	if(fmt == IG::PIXEL_FMT_RGB565)
-		fmt = IG::PIXEL_FMT_RGBA8888; // internally render in 32bpp
+	if(fmt == IG::PixelFmtRGB565)
+		fmt = IG::PixelFmtRGBA8888; // internally render in 32bpp
 	pixFmt = fmt;
 	if(activeCanvas)
 	{

@@ -30,12 +30,12 @@ class VController;
 enum class VControllerState : uint8_t;
 enum class VControllerVisibility : uint8_t;
 
-class TouchConfigView final: public TableView, public EmuAppHelper<TouchConfigView>
+class TouchConfigView final: public TableView, public EmuAppHelper
 {
 public:
 	TouchConfigView(ViewAttachParams attach, VController &vController);
 	void place() final;
-	void draw(Gfx::RendererCommands &__restrict__) final;
+	void draw(Gfx::RendererCommands&__restrict__, ViewDrawParams p = {}) const final;
 	void reloadItems();
 	void onShow() final;
 
@@ -55,7 +55,7 @@ protected:
 	TextMenuItem btnPlace;
 	TextMenuItem placeVideo;
 	TextMenuItem addButton;
-	IG_UseMemberIf(Config::DISPLAY_CUTOUT, BoolMenuItem, allowButtonsPastContentBounds);
+	ConditionalMember<Config::DISPLAY_CUTOUT, BoolMenuItem> allowButtonsPastContentBounds;
 	TextMenuItem resetEmuPositions;
 	TextMenuItem resetEmuGroups;
 	TextMenuItem resetUIPositions;

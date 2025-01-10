@@ -25,17 +25,21 @@
 #include <utility>
 #include <variant>
 
+struct xcb_connection_t;
+struct xcb_screen_t;
+
 namespace IG
 {
 
 class ApplicationContext;
 
 using FrameTimerVariant = std::variant<
+	NullFrameTimer,
+	SimpleFrameTimer,
 	#if CONFIG_PACKAGE_LIBDRM
 	DRMFrameTimer,
 	#endif
-	FBDevFrameTimer,
-	SimpleFrameTimer>;
+	FBDevFrameTimer>;
 
 class FrameTimer : public FrameTimerInterface<FrameTimerVariant>
 {
@@ -43,17 +47,20 @@ public:
 	using FrameTimerInterface::FrameTimerInterface;
 };
 
+using ScreenId = xcb_screen_t*;
+
 class XScreen
 {
 public:
 	struct InitParams
 	{
-		void *xScreen;
+		xcb_connection_t& conn;
+		xcb_screen_t& screen;
 	};
 
 	XScreen(ApplicationContext, InitParams);
 	std::pair<float, float> mmSize() const;
-	void *nativeObject() const;
+	xcb_screen_t* nativeObject() const;
 	bool operator ==(XScreen const &rhs) const;
 	explicit operator bool() const;
 
@@ -63,7 +70,7 @@ public:
 	}
 
 protected:
-	void *xScreen{};
+	xcb_screen_t* xScreen{};
 	FrameTimer frameTimer;
 	SteadyClockTime frameTime_{};
 	float xMM{}, yMM{};

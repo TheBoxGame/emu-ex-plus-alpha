@@ -69,7 +69,7 @@ ScrollView::ScrollView(ViewAttachParams attach):
 				//logMsg("animating over-scroll");
 				int clip = offset < 0 ? 0 : offsetMax;
 				int sign = offset < 0 ? 1 : -1;
-				for(auto i : iotaCount(frames))
+				for([[maybe_unused]] auto i : iotaCount(frames))
 				{
 					int vel = std::abs((clip - offset) * overScrollVelScale);
 					offset += sign * std::max(1, vel);
@@ -150,7 +150,7 @@ void ScrollView::setContentSize(WSize contentSize)
 	scrollBarQuads.write(0, {.bounds = scrollBarRect.as<int16_t>()});
 }
 
-void ScrollView::drawScrollContent(Gfx::RendererCommands &cmds)
+void ScrollView::drawScrollContent(Gfx::RendererCommands &cmds) const
 {
 	using namespace IG::Gfx;
 	if(contentIsBiggerThanView && (allowScrollWholeArea_ || dragTracker.isDragging()))

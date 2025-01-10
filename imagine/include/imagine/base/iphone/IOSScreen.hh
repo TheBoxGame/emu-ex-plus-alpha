@@ -18,6 +18,8 @@
 #include <imagine/config/defs.hh>
 #include <imagine/time/Time.hh>
 #include <imagine/base/baseDefs.hh>
+#include <imagine/base/SimpleFrameTimer.hh>
+#include <imagine/base/FrameTimerInterface.hh>
 
 #ifdef __OBJC__
 #import <UIKit/UIKit.h>
@@ -28,6 +30,17 @@ namespace IG
 {
 
 class ApplicationContext;
+
+// TODO: add FrameTimer interface for CADisplayLink
+using FrameTimerVariant = std::variant<SimpleFrameTimer>;
+
+class FrameTimer : public FrameTimerInterface<FrameTimerVariant>
+{
+public:
+	using FrameTimerInterface::FrameTimerInterface;
+};
+
+using ScreenId = void*;
 
 class IOSScreen
 {
@@ -57,17 +70,21 @@ public:
 	}
 
 	#ifdef __OBJC__
-	IOSScreen(UIScreen *screen);
-	UIScreen *uiScreen() const { return (__bridge UIScreen*)uiScreen_; }
-	CADisplayLink *displayLink() const { return (__bridge CADisplayLink*)displayLink_; }
+	IOSScreen(UIScreen*);
+	UIScreen* uiScreen() const { return (__bridge UIScreen*)uiScreen_; }
+	CADisplayLink* displayLink() const { return (__bridge CADisplayLink*)displayLink_; }
+	NSRunLoop* displayLinkRunLoop() const { return (__bridge NSRunLoop*)displayLinkRunLoop_; }
 	#endif
 
 protected:
 	void *uiScreen_{}; // UIScreen in ObjC
 	void *displayLink_{}; // CADisplayLink in ObjC
+	void *displayLinkRunLoop_{}; // NSRunLoop in ObjC
 	SteadyClockTime frameTime_{};
 	float frameRate_{};
 	bool displayLinkActive{};
+
+	void updateDisplayLinkRunLoop();
 };
 
 using ScreenImpl = IOSScreen;

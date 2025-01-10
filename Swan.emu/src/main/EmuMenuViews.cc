@@ -15,6 +15,7 @@
 
 #include <emuframework/SystemOptionView.hh>
 #include <emuframework/SystemActionsView.hh>
+#include <emuframework/viewUtils.hh>
 #include <mednafen-emuex/MDFNUtils.hh>
 #include "MainApp.hh"
 #include <wswan/wswan.h>
@@ -24,13 +25,12 @@ namespace EmuEx
 
 using namespace MDFN_IEN_WSWAN;
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
-class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<CustomSystemOptionView>
+class CustomSystemOptionView : public SystemOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemOptionView>::system;
-	using MainAppHelper<CustomSystemOptionView>::app;
+	using MainAppHelper::system;
+	using MainAppHelper::app;
 
 	TextHeadingMenuItem userProfile{"WonderSwan User Profile", attachParams()};
 
@@ -50,14 +50,14 @@ class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<Cus
 		"Name", system().userName, attachParams(),
 		[this](const Input::Event &e)
 		{
-			app().pushAndShowNewCollectValueInputView<const char*, ScanValueMode::ALLOW_BLANK>(attachParams(), e,
+			pushAndShowNewCollectValueInputView<const char*, ScanValueMode::AllowBlank>(attachParams(), e,
 				"Input name", system().userName,
-				[this](EmuApp &app, auto str_)
+				[this](CollectTextInputView&, auto str_)
 				{
 					std::string_view str{str_};
 					if(str.size() > system().userName.max_size())
 					{
-						app.postErrorMessage("Name is too long");
+						app().postErrorMessage("Name is too long");
 						return false;
 					}
 					system().userName = str;
@@ -72,9 +72,9 @@ class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<Cus
 		"Birth Year", std::to_string(system().userProfile.birthYear), attachParams(),
 		[this](const Input::Event &e)
 		{
-			app().pushAndShowNewCollectValueRangeInputView<int, 1, 9999>(attachParams(), e,
+			pushAndShowNewCollectValueRangeInputView<int, 1, 9999>(attachParams(), e,
 				"Input 1 to 9999", std::to_string(system().userProfile.birthYear),
-				[this](EmuApp &app, auto val)
+				[this](CollectTextInputView&, auto val)
 				{
 					system().userProfile.birthYear = val;
 					birthYear.set2ndName(std::to_string(val));
@@ -88,9 +88,9 @@ class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<Cus
 		"Birth Month", std::to_string(system().userProfile.birthMonth), attachParams(),
 		[this](const Input::Event &e)
 		{
-			app().pushAndShowNewCollectValueRangeInputView<int, 1, 12>(attachParams(), e,
+			pushAndShowNewCollectValueRangeInputView<int, 1, 12>(attachParams(), e,
 				"Input 1 to 12", std::to_string(system().userProfile.birthMonth),
-				[this](EmuApp &app, auto val)
+				[this](CollectTextInputView&, auto val)
 				{
 					system().userProfile.birthMonth = val;
 					birthMonth.set2ndName(std::to_string(val));
@@ -104,9 +104,9 @@ class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<Cus
 		"Birth Day", std::to_string(system().userProfile.birthDay), attachParams(),
 		[this](const Input::Event &e)
 		{
-			app().pushAndShowNewCollectValueRangeInputView<int, 1, 31>(attachParams(), e,
+			pushAndShowNewCollectValueRangeInputView<int, 1, 31>(attachParams(), e,
 				"Input 1 to 31", std::to_string(system().userProfile.birthDay),
-				[this](EmuApp &app, auto val)
+				[this](CollectTextInputView&, auto val)
 				{
 					system().userProfile.birthDay = val;
 					birthDay.set2ndName(std::to_string(val));
@@ -173,7 +173,7 @@ public:
 	}
 };
 
-class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionView>
+class ConsoleOptionView : public TableView, public MainAppHelper
 {
 	TextMenuItem::SelectDelegate setRotationDel()
 	{

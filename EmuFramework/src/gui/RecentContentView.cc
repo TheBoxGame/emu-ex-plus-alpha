@@ -26,13 +26,13 @@ RecentContentView::RecentContentView(ViewAttachParams attach, RecentContent &rec
 	TableView
 	{
 		"Recent Content", attach,
-		[this](const TableView &)
+		[this](TableView::ItemMessage msg)
 		{
-			return 1 + recentItems.size();
-		},
-		[this](const TableView &, size_t idx) -> MenuItem&
-		{
-			return idx < recentItems.size() ? recentItems[idx] : clear;
+			return msg.visit(overloaded
+			{
+				[&](const ItemsMessage&) -> ItemReply { return 1 + recentItems.size(); },
+				[&](const GetItemMessage& m) -> ItemReply { return m.idx < recentItems.size() ? &recentItems[m.idx] : &clear; },
+			});
 		}
 	},
 	clear
@@ -56,7 +56,7 @@ RecentContentView::RecentContentView(ViewAttachParams attach, RecentContent &rec
 	recentItems.reserve(recentContent_.size());
 	for(auto &entry : recentContent_)
 	{
-		auto &recentItem = recentItems.emplace_back(entry.name, attach,
+		recentItems.emplace_back(entry.name, attach,
 			[this, &entry](const Input::Event &e)
 			{
 				app().createSystemWithMedia({}, entry.path, appContext().fileUriDisplayName(entry.path), e, {}, attachParams(),

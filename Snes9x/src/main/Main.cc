@@ -6,6 +6,7 @@
 #include <imagine/util/format.hh>
 #include <imagine/util/string.h>
 #include <imagine/util/zlib.hh>
+#include <imagine/logger/logger.h>
 
 #include <memmap.h>
 #include <display.h>
@@ -31,7 +32,7 @@ namespace EmuEx
 
 const char *EmuSystem::creditsViewStr = CREDITS_INFO_STRING "(c) 2011-2024\nRobert Broglia\nwww.explusalpha.com\n\nPortions (c) the\nSnes9x Team\nwww.snes9x.com";
 #if PIXEL_FORMAT == RGB565
-constexpr auto srcPixFmt = IG::PIXEL_FMT_RGB565;
+constexpr auto srcPixFmt = IG::PixelFmtRGB565;
 #else
 #error "incompatible PIXEL_FORMAT value"
 #endif
@@ -55,7 +56,7 @@ EmuSystem::NameFilterFunc EmuSystem::defaultFsFilter =
 Snes9xApp::Snes9xApp(ApplicationInitParams initParams, ApplicationContext &ctx):
 	EmuApp{initParams, ctx}, snes9xSystem{ctx} {}
 
-const BundledGameInfo &EmuSystem::bundledGameInfo(int idx) const
+const BundledGameInfo &EmuSystem::bundledGameInfo(int) const
 {
 	static constexpr BundledGameInfo info[]
 	{
@@ -85,7 +86,7 @@ MutablePixmapView Snes9xSystem::fbPixmapView(WSize size, bool useInterlaceFields
 	return pix;
 }
 
-void Snes9xSystem::renderFramebuffer(EmuVideo &video)
+void Snes9xSystem::renderFramebuffer(EmuVideo&)
 {
 	emuSysTask = {};
 	S9xDeinitUpdate(IPPU.RenderedScreenWidth, IPPU.RenderedScreenHeight);
@@ -246,7 +247,7 @@ IOBuffer Snes9xSystem::readSufamiTurboBios() const
 	}
 	else
 	{
-		auto buff = appCtx.openFileUri(sufamiBiosPath, IOAccessHint::All).releaseBuffer();
+		auto buff = appCtx.openFileUri(sufamiBiosPath, {.accessHint = IOAccessHint::All}).releaseBuffer();
 		if(!isSufamiTurboBios(buff))
 			throw std::runtime_error{"Incompatible Sufami Turbo BIOS"};
 		return buff;
@@ -266,7 +267,7 @@ void Snes9xSystem::loadContent(IO &io, EmuSystemCreateParams, OnLoadProgressDele
 	Memory.HeaderCount = 0;
 	auto forceVideoSystemSettings = [&]() -> std::pair<bool, bool> // ForceNTSC, ForcePAL
 	{
-		switch(optionVideoSystem.val)
+		switch(optionVideoSystem)
 		{
 			case 1: return {true, false};
 			case 2: return {false, true};

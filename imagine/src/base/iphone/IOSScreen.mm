@@ -83,12 +83,10 @@ IOSScreen::IOSScreen(ApplicationContext, InitParams initParams)
 	}
 	if(Config::DEBUG_BUILD)
 	{
-		#ifdef CONFIG_BASE_IOS_RETINA_SCALE
 		if(hasAtLeastIOS8())
 		{
 			logMsg("has %f point scaling (%f native)", (double)[screen scale], (double)[screen nativeScale]);
 		}
-		#endif
 		for(UIScreenMode *mode in screen.availableModes)
 		{
 			logMsg("has mode: %dx%d", (int)mode.size.width, (int)mode.size.height);
@@ -100,6 +98,7 @@ IOSScreen::IOSScreen(ApplicationContext, InitParams initParams)
 	displayLink_ = (void*)CFBridgingRetain([screen displayLinkWithTarget:[[DisplayLinkHelper alloc] initWithScreen:(Screen*)this]
 	                                       selector:@selector(onFrame:)]);
 	displayLink().paused = YES;
+	updateDisplayLinkRunLoop();
 
 	// note: the _refreshRate value is actually time per frame in seconds
 	auto frameTime = [uiScreen() _refreshRate];
@@ -115,7 +114,9 @@ IOSScreen::IOSScreen(ApplicationContext, InitParams initParams)
 IOSScreen::~IOSScreen()
 {
 	logMsg("deinit screen %p", uiScreen_);
+	[displayLink() invalidate];
 	CFRelease(displayLink_);
+	CFRelease(displayLinkRunLoop_);
 	CFRelease(uiScreen_);
 }
 
@@ -164,7 +165,7 @@ void Screen::unpostFrameTimer()
 	displayLink().paused = YES;
 }
 
-void Screen::setFrameRate(FrameRate rate)
+void Screen::setFrameRate(FrameRate)
 {
 	// unsupported
 }
@@ -173,6 +174,34 @@ std::span<const FrameRate> Screen::supportedFrameRates() const
 {
 	// TODO
 	return {&frameRate_, 1};
+}
+
+void Screen::setVariableFrameTime(bool)
+{
+	// TODO
+}
+
+void Screen::setFrameEventsOnThisThread()
+{
+	unpostFrame();
+	removeFrameEvents();
+	updateDisplayLinkRunLoop();
+}
+
+void Screen::removeFrameEvents()
+{
+	unpostFrame();
+	if(!displayLinkRunLoop_)
+		return;
+	[displayLink() removeFromRunLoop:displayLinkRunLoop() forMode:NSDefaultRunLoopMode];
+	CFRelease(std::exchange(displayLinkRunLoop_, nullptr));
+}
+
+void IOSScreen::updateDisplayLinkRunLoop()
+{
+	assert(!displayLinkRunLoop_);
+	displayLinkRunLoop_ = (void*)CFBridgingRetain([NSRunLoop currentRunLoop]);
+	[displayLink() addToRunLoop:displayLinkRunLoop() forMode:NSDefaultRunLoopMode];
 }
 
 }

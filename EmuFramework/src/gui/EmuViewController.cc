@@ -15,14 +15,13 @@
 
 #include <emuframework/EmuViewController.hh>
 #include <emuframework/EmuApp.hh>
-#include <emuframework/EmuAppHelper.hh>
 #include <emuframework/EmuSystem.hh>
 #include <emuframework/EmuView.hh>
 #include <emuframework/EmuVideoLayer.hh>
 #include <emuframework/EmuVideo.hh>
 #include <emuframework/EmuAudio.hh>
 #include <emuframework/MainMenuView.hh>
-#include "../EmuOptions.hh"
+#include <emuframework/EmuOptions.hh>
 #include "../WindowData.hh"
 #include <imagine/base/ApplicationContext.hh>
 #include <imagine/base/Screen.hh>
@@ -32,6 +31,7 @@
 #include <imagine/gui/AlertView.hh>
 #include <imagine/gui/ToastView.hh>
 #include <imagine/fs/FS.hh>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
@@ -46,9 +46,7 @@ EmuViewController::EmuViewController(ViewAttachParams viewAttach,
 	viewStack{viewAttach, app()}
 {
 	inputView.setController(this);
-	auto &win = viewAttach.window;
 	auto &face = viewAttach.viewManager.defaultFace;
-	auto &screen = *viewAttach.window.screen();
 	{
 		auto viewNav = std::make_unique<BasicNavView>
 		(
@@ -73,16 +71,8 @@ EmuViewController::EmuViewController(ViewAttachParams viewAttach,
 		app().onCustomizeNavView(*viewNav);
 		viewStack.setNavView(std::move(viewNav));
 	}
-	viewStack.showNavView(app().showsTitleBar());
+	viewStack.showNavView(app().showsTitleBar);
 	emuView.setLayoutInputView(&inputView);
-}
-
-void EmuViewController::pushAndShowMainMenu(ViewAttachParams viewAttach, EmuVideoLayer &videoLayer,
-	EmuAudio &emuAudio)
-{
-	auto mainMenu = EmuApp::makeView(viewAttach, EmuApp::ViewID::MAIN_MENU);
-	static_cast<MainMenuView*>(mainMenu.get())->setAudioVideo(emuAudio, videoLayer);
-	viewStack.pushAndShow(std::move(mainMenu));
 }
 
 static bool shouldExitFromViewRootWithoutPrompt(const Input::KeyEvent &e)
@@ -93,7 +83,7 @@ static bool shouldExitFromViewRootWithoutPrompt(const Input::KeyEvent &e)
 EmuMenuViewStack::EmuMenuViewStack(ViewAttachParams attach, EmuApp &app):
 	ViewStack(attach), emuAppPtr{&app} {}
 
-bool EmuMenuViewStack::inputEvent(const Input::Event &e)
+bool EmuMenuViewStack::inputEvent(const Input::Event& e)
 {
 	if(ViewStack::inputEvent(e))
 	{
@@ -162,7 +152,7 @@ void EmuViewController::dismissView(int idx, bool refreshLayout)
 	viewStack.dismissView(idx, showingEmulation ? false : refreshLayout);
 }
 
-bool EmuViewController::inputEvent(const Input::Event &e)
+bool EmuViewController::inputEvent(const Input::Event& e)
 {
 	if(showingEmulation)
 	{
@@ -215,7 +205,7 @@ void EmuViewController::moveEmuViewToWindow(IG::Window &win)
 
 void EmuViewController::configureWindowForEmulation(IG::Window &win, FrameTimeConfig frameTimeConfig, bool running)
 {
-	emuView.renderer().setWindowValidOrientations(win, running ? app().emuOrientation() : app().menuOrientation());
+	emuView.renderer().setWindowValidOrientations(win, running ? app().emuOrientation.value() : app().menuOrientation.value());
 	emuView.renderer().task().setPresentMode(win, running ? Gfx::PresentMode(app().effectivePresentMode()) : Gfx::PresentMode::Auto);
 	if(running)
 		app().setIntendedFrameRate(win, frameTimeConfig);
@@ -230,6 +220,7 @@ void EmuViewController::showEmulationView(FrameTimeConfig frameTimeConfig)
 		return;
 	viewStack.top().onHide();
 	showingEmulation = true;
+	emuView.window().configureFrameTimeSource(app().frameTimeSource);
 	configureWindowForEmulation(emuView.window(), frameTimeConfig, true);
 	if(emuView.window() != inputView.window())
 		inputView.postDraw();
@@ -243,6 +234,7 @@ void EmuViewController::showMenuView(bool updateTopView)
 	if(!showingEmulation)
 		return;
 	showingEmulation = false;
+	emuView.window().configureFrameTimeSource(FrameTimeSource::Unset);
 	presentTime = {};
 	inputView.setSystemGestureExclusion(false);
 	configureWindowForEmulation(emuView.window(), {}, false);
@@ -271,7 +263,16 @@ void EmuViewController::placeElements()
 	auto &winData = app().mainWindowData();
 	emuView.manager().setTableXIndentToDefault(appContext().mainWindow());
 	placeEmuViews();
-	viewStack.place(winData.contentBounds(), winData.windowBounds());
+	WRect contentBounds = winData.contentBounds();
+	WRect windowBounds = winData.windowBounds();
+	if(app().menuScale != 100)
+	{
+		float scaler = app().menuScale / 100.f;
+		contentBounds *= scaler;
+		contentBounds.setPos(winData.contentBounds().pos(C2DO), C2DO);
+		windowBounds = contentBounds;
+	}
+	viewStack.place(contentBounds, windowBounds);
 }
 
 void EmuViewController::updateMainWindowViewport(IG::Window &win, IG::Viewport viewport, Gfx::RendererTask &task)
@@ -350,9 +351,14 @@ void EmuViewController::prepareDraw()
 	viewStack.prepareDraw();
 }
 
+static Gfx::DrawAsyncMode drawAsyncMode(bool showingEmulation)
+{
+	return showingEmulation ? Gfx::DrawAsyncMode::FULL : Gfx::DrawAsyncMode::AUTO;
+}
+
 bool EmuViewController::drawMainWindow(IG::Window &win, IG::WindowDrawParams params, Gfx::RendererTask &task)
 {
-	return task.draw(win, params, {},
+	return task.draw(win, params, {.asyncMode = drawAsyncMode(showingEmulation)},
 		[this, isBlankFrame = std::exchange(drawBlankFrame, {})](IG::Window &win, Gfx::RendererCommands &cmds)
 	{
 		auto &winData = windowData(win);
@@ -368,9 +374,7 @@ bool EmuViewController::drawMainWindow(IG::Window &win, IG::WindowDrawParams par
 				emuView.drawframeTimeStatsText(cmds);
 			if(winData.hasPopup)
 				popup.draw(cmds);
-			app().record(FrameTimeStatEvent::aboutToPresent);
 			cmds.present(presentTime);
-			app().record(FrameTimeStatEvent::endOfDraw);
 			app().notifyWindowPresented();
 		}
 		else
@@ -389,7 +393,7 @@ bool EmuViewController::drawMainWindow(IG::Window &win, IG::WindowDrawParams par
 
 bool EmuViewController::drawExtraWindow(IG::Window &win, IG::WindowDrawParams params, Gfx::RendererTask &task)
 {
-	return task.draw(win, params, {},
+	return task.draw(win, params, {.asyncMode = drawAsyncMode(showingEmulation)},
 		[this](IG::Window &win, Gfx::RendererCommands &cmds)
 	{
 		auto &winData = windowData(win);
@@ -425,7 +429,7 @@ void EmuViewController::showSystemActionsView(ViewAttachParams attach, const Inp
 	app().showUI();
 	if(!viewStack.contains("System Actions"))
 	{
-		viewStack.pushAndShow(EmuApp::makeView(attach, EmuApp::ViewID::SYSTEM_ACTIONS), e);
+		viewStack.pushAndShow(app().makeView(attach, EmuApp::ViewID::SYSTEM_ACTIONS), e);
 	}
 }
 

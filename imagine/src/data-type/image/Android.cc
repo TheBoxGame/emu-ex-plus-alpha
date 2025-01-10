@@ -48,7 +48,7 @@ static PixmapImage makePixmapImage(JNIEnv *env, jobject bitmap, JNI::InstMethod<
 	return PixmapImage{{env, bitmap, recycle}, pix};
 }
 
-PixmapImage PixmapReader::load(const char *name, PixmapReaderParams params) const
+PixmapImage PixmapReader::load(const char *name, PixmapReaderParams) const
 {
 	auto env = app().thisThreadJniEnv();
 	auto nameJStr = env->NewStringUTF(name);
@@ -115,7 +115,7 @@ BitmapWriter::BitmapWriter(ApplicationContext ctx):
 bool PixmapWriter::writeToFile(PixmapView pix, const char *path) const
 {
 	auto env = app().thisThreadJniEnv();
-	auto aFormat = pix.format().id() == PIXEL_RGB565 ? ANDROID_BITMAP_FORMAT_RGB_565 : ANDROID_BITMAP_FORMAT_RGBA_8888;
+	auto aFormat = pix.format() == PixelFmtRGB565 ? ANDROID_BITMAP_FORMAT_RGB_565 : ANDROID_BITMAP_FORMAT_RGBA_8888;
 	auto bitmap = jMakeBitmap(env, baseActivity, pix.w(), pix.h(), aFormat);
 	if(!bitmap)
 	{

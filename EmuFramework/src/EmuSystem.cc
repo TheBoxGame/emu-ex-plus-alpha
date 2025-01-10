@@ -14,7 +14,7 @@
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <emuframework/EmuSystem.hh>
-#include "EmuOptions.hh"
+#include <emuframework/EmuOptions.hh>
 #include <emuframework/EmuApp.hh>
 #include <emuframework/EmuAudio.hh>
 #include <emuframework/EmuVideo.hh>
@@ -43,6 +43,7 @@ constexpr SystemLogger log{"EmuSystem"};
 [[gnu::weak]] bool EmuSystem::inputHasKeyboard = false;
 [[gnu::weak]] bool EmuSystem::hasBundledGames = false;
 [[gnu::weak]] bool EmuSystem::hasPALVideoSystem = false;
+[[gnu::weak]] bool EmuSystem::canRenderRGB565 = true;
 [[gnu::weak]] bool EmuSystem::canRenderRGBA8888 = true;
 [[gnu::weak]] bool EmuSystem::hasResetModes = false;
 [[gnu::weak]] bool EmuSystem::handlesArchiveFiles = false;
@@ -74,13 +75,13 @@ bool EmuApp::shouldOverwriteExistingState() const
 
 void EmuSystem::loadState(EmuApp &app, CStringView uri)
 {
-	auto file = appContext().openFileUri(uri, IOAccessHint::All, {});
+	auto file = appContext().openFileUri(uri, {.accessHint = IOAccessHint::All});
 	readState(app, file.buffer(IOBufferMode::Release));
 }
 
 void EmuSystem::saveState(CStringView uri)
 {
-	auto file = appContext().openFileUri(uri, {}, OpenFlags::newFile());
+	auto file = appContext().openFileUri(uri, OpenFlags::newFile());
 	file.write(saveState().span());
 }
 
@@ -266,14 +267,14 @@ void EmuSystem::closeRuntimeSystem(EmuApp &app)
 {
 	if(hasContent())
 	{
-		app.video().clear();
-		app.audio().flush();
-		app.autosaveManager().save();
+		app.video.clear();
+		app.audio.flush();
+		app.autosaveManager.save();
 		app.saveSessionOptions();
 		log.info("closing game:{}", contentName_);
 		flushBackupMemory(app);
 		closeSystem();
-		app.autosaveManager().cancelTimer();
+		app.autosaveManager.cancelTimer();
 		app.rewindManager.clear();
 		state = State::OFF;
 	}
@@ -294,8 +295,8 @@ void EmuSystem::pause(EmuApp &app)
 {
 	if(isActive())
 		state = State::PAUSED;
-	app.audio().stop();
-	app.autosaveManager().pauseTimer();
+	app.audio.stop();
+	app.autosaveManager.pauseTimer();
 	app.rewindManager.pauseTimer();
 	onStop();
 }
@@ -309,7 +310,7 @@ void EmuSystem::start(EmuApp &app)
 	resetFrameTime();
 	onStart();
 	app.startAudio();
-	app.autosaveManager().startTimer();
+	app.autosaveManager.startTimer();
 	if(stateSizeChangesAtRuntime && app.rewindManager.maxStates)
 	{
 		auto newStateSize = stateSize();
@@ -322,7 +323,7 @@ void EmuSystem::start(EmuApp &app)
 SteadyClockTime EmuSystem::benchmark(EmuVideo &video)
 {
 	auto before = SteadyClock::now();
-	for(auto i : iotaCount(180))
+	for([[maybe_unused]] auto i : iotaCount(180))
 	{
 		runFrame({}, &video, nullptr);
 	}
@@ -365,7 +366,7 @@ int EmuSystem::updateAudioFramesPerVideoFrame()
 	return wholeFrames;
 }
 
-[[gnu::weak]] FS::PathString EmuSystem::willLoadContentFromPath(std::string_view path, std::string_view displayName)
+[[gnu::weak]] FS::PathString EmuSystem::willLoadContentFromPath(std::string_view, std::string_view)
 {
 	return {};
 }
@@ -415,7 +416,8 @@ void EmuSystem::loadContentFromPath(CStringView pathStr, std::string_view displa
 		return;
 	}
 	log.info("load from {}:{}", IG::isUri(path) ? "uri" : "path", path);
-	loadContentFromFile(appContext().openFileUri(path, IOAccessHint::Sequential), path, displayName, params, onLoadProgress);
+	loadContentFromFile(appContext().openFileUri(path, {.accessHint = IOAccessHint::Sequential}),
+		path, displayName, params, onLoadProgress);
 }
 
 void EmuSystem::loadContentFromFile(IO file, CStringView path, std::string_view displayName, EmuSystemCreateParams params, OnLoadProgressDelegate onLoadProgress)
@@ -507,6 +509,8 @@ FS::FileString EmuSystem::contentDisplayNameForPathDefaultImpl(CStringView path)
 void EmuSystem::setInitialLoadPath(CStringView path)
 {
 	assert(contentName_.empty());
+	if(!path)
+		return;
 	contentLocation_ = path;
 }
 
@@ -568,14 +572,14 @@ FileIO EmuSystem::openStaticBackupMemoryFile(CStringView uri, size_t size, uint8
 {
 	if(!size) [[unlikely]]
 		return {};
-	auto file = appContext().openFileUri(uri, IOAccessHint::Normal, OpenFlags::testCreateFile());
+	auto file = appContext().openFileUri(uri, OpenFlags::testCreateFile());
 	if(!file) [[unlikely]]
 		return {};
 	auto fileSize = file.size();
 	if(fileSize != size)
 		file.truncate(size);
 	// size is static so try to use a mapped file for writing
-	bool isMapped = file.tryMap(IOAccessHint::Normal, OpenFlags::createFile());
+	bool isMapped = file.tryMap(OpenFlags::createFile());
 	if(initValue && fileSize < size)
 	{
 		if(isMapped)

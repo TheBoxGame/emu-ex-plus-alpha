@@ -21,23 +21,24 @@
 #include <emuframework/DataPathSelectView.hh>
 #include <emuframework/SystemActionsView.hh>
 #include <emuframework/EmuInput.hh>
+#include <emuframework/viewUtils.hh>
 #include <mednafen-emuex/MDFNUtils.hh>
 #include "MainApp.hh"
 #include <imagine/fs/FS.hh>
 #include <imagine/gui/AlertView.hh>
 #include <imagine/util/format.hh>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
 constexpr std::string_view pceFastText{"pce_fast (Default for general use)"};
 constexpr std::string_view pceText{"pce (Better accuracy, higher power usage)"};
 constexpr std::string_view changeEmuCoreText{"Really change emulation core? Note that save states from different cores aren't compatible."};
 
-class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionView>
+class ConsoleOptionView : public TableView, public MainAppHelper
 {
 	BoolMenuItem sixButtonPad
 	{
@@ -177,10 +178,10 @@ public:
 	}
 };
 
-class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper<CustomFilePathOptionView>
+class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomFilePathOptionView>::app;
-	using MainAppHelper<CustomFilePathOptionView>::system;
+	using MainAppHelper::app;
+	using MainAppHelper::system;
 
 	TextMenuItem sysCardPath
 	{
@@ -212,10 +213,10 @@ public:
 	}
 };
 
-class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<CustomVideoOptionView>
+class CustomVideoOptionView : public VideoOptionView, public MainAppHelper
 {
-	using  MainAppHelper<CustomVideoOptionView>::app;
-	using  MainAppHelper<CustomVideoOptionView>::system;
+	using  MainAppHelper::app;
+	using  MainAppHelper::system;
 
 	BoolMenuItem spriteLimit
 	{
@@ -267,7 +268,7 @@ class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<Custo
 	};
 
 public:
-	CustomVideoOptionView(ViewAttachParams attach): VideoOptionView{attach, true}
+	CustomVideoOptionView(ViewAttachParams attach, EmuVideoLayer &layer): VideoOptionView{attach, layer, true}
 	{
 		loadStockItems();
 		item.emplace_back(&systemSpecificHeading);
@@ -277,9 +278,9 @@ public:
 	}
 };
 
-class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<CustomSystemOptionView>
+class CustomSystemOptionView : public SystemOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemOptionView>::system;
+	using MainAppHelper::system;
 
 	TextMenuItem cdSpeedItem[5]
 	{
@@ -355,10 +356,10 @@ public:
 	}
 };
 
-class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<CustomAudioOptionView>
+class CustomAudioOptionView : public AudioOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomAudioOptionView>::system;
-	using MainAppHelper<CustomAudioOptionView>::app;
+	using MainAppHelper::system;
+	using MainAppHelper::app;
 
 	TextHeadingMenuItem mixer{"Mixer", attachParams()};
 
@@ -401,8 +402,8 @@ class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<Custo
 				"Custom Value", attachParams(),
 				[=, this](Input::Event e)
 				{
-					app().pushAndShowNewCollectValueRangeInputView<int, 0, 200>(attachParams(), e, "Input 0 to 200", "",
-						[=, this](EmuApp &, auto val)
+					pushAndShowNewCollectValueRangeInputView<int, 0, 200>(attachParams(), e, "Input 0 to 200", "",
+						[=, this](CollectTextInputView&, auto val)
 						{
 							system().setVolume(type, val);
 							volumeLevel[desc(type).idx].setSelected(MenuId{val}, *this);
@@ -452,7 +453,7 @@ class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<Custo
 	};
 
 public:
-	CustomAudioOptionView(ViewAttachParams attach): AudioOptionView{attach, true}
+	CustomAudioOptionView(ViewAttachParams attach, EmuAudio& audio): AudioOptionView{attach, audio, true}
 	{
 		loadStockItems();
 		item.emplace_back(&adpcmFilter);
@@ -467,8 +468,8 @@ std::unique_ptr<View> EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 	switch(id)
 	{
 		case ViewID::SYSTEM_ACTIONS: return std::make_unique<CustomSystemActionsView>(attach);
-		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach);
-		case ViewID::VIDEO_OPTIONS: return std::make_unique<CustomVideoOptionView>(attach);
+		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach, audio);
+		case ViewID::VIDEO_OPTIONS: return std::make_unique<CustomVideoOptionView>(attach, videoLayer);
 		case ViewID::SYSTEM_OPTIONS: return std::make_unique<CustomSystemOptionView>(attach);
 		case ViewID::FILE_PATH_OPTIONS: return std::make_unique<CustomFilePathOptionView>(attach);
 		default: return nullptr;

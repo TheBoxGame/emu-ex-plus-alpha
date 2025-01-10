@@ -17,6 +17,7 @@
 #include <emuframework/EmuSystem.hh>
 #include <emuframework/EmuApp.hh>
 #include "MainSystem.hh"
+#include <imagine/logger/logger.h>
 
 extern "C"
 {
@@ -43,23 +44,11 @@ void C64System::setCanvasSkipFrame(bool on)
 		activeCanvas->skipFrame = on;
 }
 
-void C64System::startCanvasRunningFrame()
-{
-	runningFrame = true;
-}
-
 CLINK LVISIBLE void vsync_do_vsync2(struct video_canvas_s *c);
 void vsync_do_vsync2(struct video_canvas_s *c)
 {
 	auto &sys = c64Sys(c);
-	if(sys.runningFrame) [[likely]]
-	{
-		//logMsg("vsync_do_vsync signaling main thread");
-		sys.runningFrame = false;
-		sys.execDoneSem.release();
-		sys.execSem.acquire();
-	}
-	else
+	if(!sys.signalEmuTaskThreadAndWait())
 	{
 		logMsg("spurious vsync_do_vsync()");
 	}
@@ -69,17 +58,18 @@ void vsyncarch_refresh_frequency_changed(double rate)
 {
 	auto &system = static_cast<C64System&>(EmuEx::gSystem());
 	system.systemFrameRate = rate;
-	system.onFrameTimeChanged();
+	if(system.hasContent())
+		system.onFrameTimeChanged();
 }
 
 static bool isValidPixelFormat(IG::PixelFormat fmt)
 {
-	return fmt == IG::PIXEL_FMT_RGBA8888 || fmt == IG::PIXEL_FMT_BGRA8888;
+	return fmt == IG::PixelFmtRGBA8888 || fmt == IG::PixelFmtBGRA8888;
 }
 
 static IG::PixmapView pixmapView(const struct video_canvas_s *c)
 {
-	IG::PixelFormat fmt{(IG::PixelFormatID)c->pixelFormat};
+	IG::PixelFormat fmt{IG::PixelFormatId{c->pixelFormat}};
 	assumeExpr(isValidPixelFormat(fmt));
 	return {{{c->w, c->h}, fmt}, c->pixmapData};
 }
@@ -93,13 +83,12 @@ static IG::PixelDesc pixelDesc(IG::PixelFormat fmt)
 static void updateInternalPixelFormat(struct video_canvas_s *c, IG::PixelFormat fmt)
 {
 	assumeExpr(isValidPixelFormat(fmt));
-	c->pixelFormat = fmt;
+	c->pixelFormat = to_underlying(fmt.id);
 }
 
 void video_arch_canvas_init(struct video_canvas_s *c)
 {
 	logMsg("init canvas:%p with size %d,%d", c, c->draw_buffer->canvas_width, c->draw_buffer->canvas_height);
-	c->video_draw_buffer_callback = nullptr;
 	c->systemPtr = (void*)&EmuEx::gSystem();
 	if(!c64Sys(c).activeCanvas)
 		c64Sys(c).activeCanvas = c;
@@ -107,7 +96,7 @@ void video_arch_canvas_init(struct video_canvas_s *c)
 
 int video_canvas_set_palette(video_canvas_t *c, struct palette_s *palette)
 {
-	IG::PixelFormat fmt{(IG::PixelFormatID)c->pixelFormat};
+	IG::PixelFormat fmt{IG::PixelFormatId{c->pixelFormat}};
 	const auto pDesc = pixelDesc(fmt);
 	auto colorTables = &c->videoconfig->color_tables;
 	auto &plugin = c64Sys(c).plugin;
@@ -151,7 +140,6 @@ void C64System::resetCanvasSourcePixmap(struct video_canvas_s *c)
 {
 	if(activeCanvas != c)
 		return;
-	unsigned canvasW = c->w;
 	unsigned canvasH = c->h;
 	if(optionCropNormalBorders && (canvasH == 247 || canvasH == 272))
 	{
@@ -168,7 +156,6 @@ void C64System::resetCanvasSourcePixmap(struct video_canvas_s *c)
 			startX = xBorderSize; startY = xBorderSize;
 		}
 		int width = 320+(xBorderSize*2 - startX*2);
-		int widthPadding = startX*2;
 		canvasSrcPix = pixmapView(c).subView({startX, startY}, {width, height});
 	}
 	else
@@ -179,7 +166,7 @@ void C64System::resetCanvasSourcePixmap(struct video_canvas_s *c)
 
 static void updateCanvasMemPixmap(struct video_canvas_s *c, int x, int y)
 {
-	IG::PixelFormat fmt{(IG::PixelFormatID)c->pixelFormat};
+	IG::PixelFormat fmt{IG::PixelFormatId{c->pixelFormat}};
 	assumeExpr(isValidPixelFormat(fmt));
 	IG::PixmapDesc desc{{x, y}, fmt};
 	c->w = x;
@@ -206,7 +193,7 @@ static void refreshFullCanvas(video_canvas_t *canvas)
 bool C64System::updateCanvasPixelFormat(struct video_canvas_s *c, IG::PixelFormat fmt)
 {
 	assumeExpr(isValidPixelFormat(fmt));
-	if(c->pixelFormat == fmt)
+	if(c->pixelFormat == to_underlying(fmt.id))
 		return false;
 	updateInternalPixelFormat(c, fmt);
 	if(!c->pixmapData)

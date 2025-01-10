@@ -20,8 +20,10 @@
 #include <emuframework/EmuViewController.hh>
 #include <emuframework/CreditsView.hh>
 #include <emuframework/StateSlotView.hh>
-#include <emuframework/InputManagerView.hh>
 #include <emuframework/BundledGamesView.hh>
+#include <emuframework/Cheats.hh>
+#include <emuframework/viewUtils.hh>
+#include "InputOverridesView.hh"
 #include "AutosaveSlotView.hh"
 #include "ResetAlertView.hh"
 #include <imagine/gui/TextEntry.hh>
@@ -36,12 +38,12 @@ constexpr SystemLogger log{"SystemActionsView"};
 
 static auto autoSaveName(EmuApp &app)
 {
-	return std::format("Autosave Slot ({})", app.autosaveManager().slotFullName());
+	return std::format("Autosave Slot ({})", app.autosaveManager.slotFullName());
 }
 
 static std::string saveAutosaveName(EmuApp &app)
 {
-	auto &autosaveManager = app.autosaveManager();
+	auto &autosaveManager = app.autosaveManager;
 	if(!autosaveManager.timerFrequency().count())
 		return "Save Autosave State";
 	return std::format("Save Autosave State (Timer In {:%M:%S})",
@@ -57,7 +59,7 @@ SystemActionsView::SystemActionsView(ViewAttachParams attach, bool customMenu):
 		{
 			if(system().hasContent())
 			{
-				pushAndShow(EmuApp::makeView(attachParams(), EmuApp::ViewID::LIST_CHEATS), e);
+				pushAndShow(makeView<CheatsView>(), e);
 			}
 		}
 	},
@@ -88,7 +90,7 @@ SystemActionsView::SystemActionsView(ViewAttachParams attach, bool customMenu):
 				{
 					.onYes = [this]
 					{
-						if(app().autosaveManager().save(AutosaveActionSource::Manual))
+						if(app().autosaveManager.save(AutosaveActionSource::Manual))
 							app().showEmulation();
 					}
 				}), e);
@@ -101,7 +103,7 @@ SystemActionsView::SystemActionsView(ViewAttachParams attach, bool customMenu):
 		{
 			if(!item.active())
 				return;
-			auto saveTime = app().autosaveManager().stateTimeAsString();
+			auto saveTime = app().autosaveManager.stateTimeAsString();
 			if(saveTime.empty())
 			{
 				app().postMessage("No saved state");
@@ -112,7 +114,7 @@ SystemActionsView::SystemActionsView(ViewAttachParams attach, bool customMenu):
 				{
 					.onYes = [this]
 					{
-						if(app().autosaveManager().load(AutosaveActionSource::Manual))
+						if(app().autosaveManager.load(AutosaveActionSource::Manual))
 							app().showEmulation();
 					}
 				}), e);
@@ -124,6 +126,14 @@ SystemActionsView::SystemActionsView(ViewAttachParams attach, bool customMenu):
 		[this](const Input::Event &e)
 		{
 			pushAndShow(makeView<StateSlotView>(), e);
+		}
+	},
+	inputOverrides
+	{
+		"Input Overrides", attach,
+		[this](const Input::Event &e)
+		{
+			pushAndShow(makeView<InputOverridesView>(app().inputManager), e);
 		}
 	},
 	addLauncherIcon
@@ -138,11 +148,11 @@ SystemActionsView::SystemActionsView(ViewAttachParams attach, bool customMenu):
 				// shortcuts to bundled games not yet supported
 				return;
 			}
-			app().pushAndShowNewCollectValueInputView<const char*>(attachParams(), e, "Shortcut Name", system().contentDisplayName(),
-				[this](EmuApp &app, auto str)
+			pushAndShowNewCollectValueInputView<const char*>(attachParams(), e, "Shortcut Name", system().contentDisplayName(),
+				[this](CollectTextInputView &, auto str)
 				{
-					appContext().addLauncherIcon(str, app.system().contentLocation());
-					app.postMessage(2, false, std::format("Added shortcut:\n{}", str));
+					appContext().addLauncherIcon(str, system().contentLocation());
+					app().postMessage(2, false, std::format("Added shortcut:\n{}", str));
 					return true;
 				});
 		}
@@ -165,8 +175,8 @@ SystemActionsView::SystemActionsView(ViewAttachParams attach, bool customMenu):
 				{
 					.onYes = [this]
 					{
-						app().video().takeGameScreenshot();
-						system().runFrame({}, &app().video(), nullptr);
+						app().video.takeGameScreenshot();
+						system().runFrame({}, &app().video, nullptr);
 					}
 				}), e);
 		}
@@ -214,8 +224,8 @@ void SystemActionsView::onShow()
 	assert(system().hasContent());
 	autosaveSlot.compile(autoSaveName(app()));
 	autosaveNow.compile(saveAutosaveName(app()));
-	autosaveNow.setActive(app().autosaveManager().slotName() != noAutosaveName);
-	revertAutosave.setActive(app().autosaveManager().slotName() != noAutosaveName);
+	autosaveNow.setActive(app().autosaveManager.slotName() != noAutosaveName);
+	revertAutosave.setActive(app().autosaveManager.slotName() != noAutosaveName);
 	resetSessionOptions.setActive(app().hasSavedSessionOptions());
 }
 
@@ -230,6 +240,7 @@ void SystemActionsView::loadStandardItems()
 	item.emplace_back(&revertAutosave);
 	item.emplace_back(&autosaveNow);
 	item.emplace_back(&stateSlot);
+	item.emplace_back(&inputOverrides);
 	if(used(addLauncherIcon))
 		item.emplace_back(&addLauncherIcon);
 	item.emplace_back(&screenshot);

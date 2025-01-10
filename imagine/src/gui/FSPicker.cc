@@ -39,6 +39,7 @@ FSPicker::FSPicker(ViewAttachParams attach, Gfx::TextureSpan backRes, Gfx::Textu
 	filter{filter},
 	controller{attach},
 	msgText{attach.rendererTask, face_ ? face_ : &defaultFace()},
+	dirListEvent{{.debugLabel = "FSPicker::dirListEvent", .eventLoop = EventLoop::forThread()}, {}},
 	mode_{mode}
 {
 	auto nav = makeView<BasicNavView>
@@ -72,8 +73,7 @@ FSPicker::FSPicker(ViewAttachParams attach, Gfx::TextureSpan backRes, Gfx::Textu
 			pushFileLocationsView(e);
 		});
 	controller.setNavView(std::move(nav));
-	controller.push(makeView<TableView>([](const TableView &) { return 0; },
-		[&d = dir](const TableView &, size_t idx) -> MenuItem& { return d[idx].text; }));
+	controller.push(makeView<TableView>(dir));
 	controller.navView()->showLeftBtn(true);
 	dir.reserve(16); // start with some initial capacity to avoid small reallocations
 }
@@ -141,7 +141,7 @@ void FSPicker::onRightNavBtn(const Input::Event &e)
 		dismiss();
 }
 
-bool FSPicker::inputEvent(const Input::Event &e)
+bool FSPicker::inputEvent(const Input::Event& e, ViewInputEventParams)
 {
 	if(e.keyEvent())
 	{
@@ -178,7 +178,7 @@ void FSPicker::prepareDraw()
 	msgText.makeGlyphs();
 }
 
-void FSPicker::draw(Gfx::RendererCommands &__restrict__ cmds)
+void FSPicker::draw(Gfx::RendererCommands &__restrict__ cmds, ViewDrawParams) const
 {
 	if(!dirListThread.isWorking())
 	{
@@ -352,17 +352,9 @@ void FSPicker::pushFileLocationsView(const Input::Event &e)
 	if(appContext().hasSystemPathPicker())
 	{
 		view->appendItem("Browse For Folder",
-			[this](View &view, const Input::Event &e)
+			[this](View& view, const Input::Event&)
 			{
-				if(!appContext().showSystemPathPicker(
-					[this, &view](CStringView uri, CStringView displayName)
-					{
-						view.dismiss();
-						if(mode_ == Mode::DIR)
-							onSelectPath_.callCopy(*this, uri, displayName, appContext().defaultInputEvent());
-						else
-							changeDirByInput(uri, appContext().rootPathInfo(uri), appContext().defaultInputEvent(), DepthMode::reset);
-					}))
+				if(!appContext().showSystemPathPicker())
 				{
 					setEmptyPath(failedSystemPickerMsg);
 					view.dismiss();
@@ -372,13 +364,9 @@ void FSPicker::pushFileLocationsView(const Input::Event &e)
 	if(mode_ != Mode::DIR && appContext().hasSystemDocumentPicker())
 	{
 		view->appendItem("Browse For File",
-			[this](View &view, const Input::Event &e)
+			[this](View& view, const Input::Event&)
 			{
-				if(!appContext().showSystemDocumentPicker(
-					[this, &view](CStringView uri, CStringView displayName)
-					{
-						onSelectPath_.callCopy(*this, uri, displayName, appContext().defaultInputEvent());
-					}))
+				if(!appContext().showSystemDocumentPicker())
 				{
 					setEmptyPath(failedSystemPickerMsg);
 					view.dismiss();
@@ -388,7 +376,7 @@ void FSPicker::pushFileLocationsView(const Input::Event &e)
 	for(auto &loc : view->locations())
 	{
 		view->appendItem(loc.description,
-			[this, &loc](View &view, const Input::Event &e)
+			[this, &loc](View& view, const Input::Event& e)
 			{
 				auto ctx = appContext();
 				if(ctx.usesPermission(Permission::WRITE_EXT_STORAGE))
@@ -403,14 +391,14 @@ void FSPicker::pushFileLocationsView(const Input::Event &e)
 	if(Config::envIsLinux)
 	{
 		view->appendItem("Root Filesystem",
-			[this](View &view, const Input::Event &e)
+			[this](View& view, const Input::Event& e)
 			{
 				changeDirByInput("/", {}, e, DepthMode::reset);
 				view.dismiss();
 			});
 	}
 	view->appendItem("Custom Path",
-		[this](const Input::Event &e)
+		[this](const Input::Event& e)
 		{
 			auto textInputView = makeView<CollectTextInputView>(
 				"Input a directory path", root.path, Gfx::TextureSpan{},
@@ -429,6 +417,27 @@ void FSPicker::pushFileLocationsView(const Input::Event &e)
 			pushAndShow(std::move(textInputView), e);
 		});
 	pushAndShow(std::move(view), e);
+}
+
+bool FSPicker::onDocumentPicked(const DocumentPickerEvent& e)
+{
+	if(appContext().fileUriType(e.uri) == FS::file_type::directory)
+	{
+		if(mode_ == Mode::DIR)
+		{
+			onSelectPath_.callCopy(*this, e.uri, e.displayName, appContext().defaultInputEvent());
+		}
+		else
+		{
+			popTo(*this);
+			changeDirByInput(e.uri, appContext().rootPathInfo(e.uri), appContext().defaultInputEvent(), DepthMode::reset);
+		}
+	}
+	else
+	{
+		onSelectPath_.callCopy(*this, e.uri, e.displayName, appContext().defaultInputEvent());
+	}
+	return true;
 }
 
 Gfx::GlyphTextureSet &FSPicker::face()
@@ -459,10 +468,10 @@ void FSPicker::startDirectoryListThread(CStringView path)
 		return;
 	}
 	dir.clear();
-	fileTableView().setItemsDelegate();
+	fileTableView().resetItemSource();
 	dirListEvent.setCallback([this]()
 	{
-		fileTableView().setItemsDelegate([&d = dir](const TableView &) { return d.size(); });
+		fileTableView().resetItemSource(dir);
 		place();
 		fileTableView().restoreUIState(std::exchange(newFileUIState, {}));
 		postDraw();
@@ -512,7 +521,7 @@ void FSPicker::listDirectory(CStringView path, ThreadStop &stop)
 					item.text.setActive(false);
 				return true;
 			});
-		std::sort(dir.begin(), dir.end(),
+		std::ranges::sort(dir,
 			[](const FileEntry &e1, const FileEntry &e2)
 			{
 				if(e1.isDir() && !e2.isDir())

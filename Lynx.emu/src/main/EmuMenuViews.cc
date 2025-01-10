@@ -22,17 +22,17 @@
 #include "MainApp.hh"
 #include <imagine/util/string.h>
 #include <imagine/util/format.hh>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
-class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper<CustomFilePathOptionView>
+class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomFilePathOptionView>::app;
-	using MainAppHelper<CustomFilePathOptionView>::system;
+	using MainAppHelper::app;
+	using MainAppHelper::system;
 
 	static bool hasBiosExtension(std::string_view name)
 	{
@@ -46,7 +46,7 @@ class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 		{
 			pushAndShow(makeViewWithName<DataFileSelectView<ArchivePathSelectMode::exclude>>("BIOS",
 				app().validSearchPath(FS::dirnameUri(system().biosPath)),
-				[this](CStringView path, FS::file_type type)
+				[this](CStringView path, FS::file_type)
 				{
 					system().biosPath = path;
 					logMsg("set BIOS:%s", system().biosPath.data());
@@ -68,7 +68,7 @@ public:
 		item.emplace_back(&biosPath);
 	}
 };
-class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionView>
+class ConsoleOptionView : public TableView, public MainAppHelper
 {
 	TextMenuItem::SelectDelegate setRotationDel()
 	{
@@ -122,10 +122,10 @@ public:
 	}
 };
 
-class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<CustomAudioOptionView>
+class CustomAudioOptionView : public AudioOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomAudioOptionView>::system;
-	using MainAppHelper<CustomAudioOptionView>::app;
+	using MainAppHelper::system;
+	using MainAppHelper::app;
 
 	BoolMenuItem lowpassFilter
 	{
@@ -135,16 +135,16 @@ class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<Custo
 	};
 
 public:
-	CustomAudioOptionView(ViewAttachParams attach): AudioOptionView{attach, true}
+	CustomAudioOptionView(ViewAttachParams attach, EmuAudio &audio): AudioOptionView{attach, audio, true}
 	{
 		loadStockItems();
 		item.emplace_back(&lowpassFilter);
 	}
 };
 
-class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<CustomSystemOptionView>
+class CustomSystemOptionView : public SystemOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemOptionView>::system;
+	using MainAppHelper::system;
 
 	BoolMenuItem saveFilenameType = saveFilenameTypeMenuItem(*this, system());
 
@@ -162,7 +162,7 @@ std::unique_ptr<View> EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 	{
 		case ViewID::SYSTEM_ACTIONS: return std::make_unique<CustomSystemActionsView>(attach);
 		case ViewID::SYSTEM_OPTIONS: return std::make_unique<CustomSystemOptionView>(attach);
-		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach);
+		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach, audio);
 		case ViewID::FILE_PATH_OPTIONS: return std::make_unique<CustomFilePathOptionView>(attach);
 		default: return nullptr;
 	}

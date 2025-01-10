@@ -19,36 +19,37 @@
 #include <emuframework/CreditsView.hh>
 #include <emuframework/FilePicker.hh>
 #include <emuframework/VideoOptionView.hh>
-#include <emuframework/InputManagerView.hh>
 #include <emuframework/TouchConfigView.hh>
 #include <emuframework/BundledGamesView.hh>
+#include "InputManagerView.hh"
 #include "RecentContentView.hh"
-#include "../EmuOptions.hh"
+#include "FrameTimingView.hh"
+#include <emuframework/EmuOptions.hh>
 #include <imagine/gui/AlertView.hh>
 #include <imagine/base/ApplicationContext.hh>
 #include <imagine/fs/FS.hh>
-#include <imagine/bluetooth/sys.hh>
-#include <imagine/bluetooth/BluetoothInputDevScanner.hh>
+#include <imagine/bluetooth/BluetoothInputDevice.hh>
 #include <format>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
 
 constexpr SystemLogger log{"AppMenus"};
 
-class OptionCategoryView : public TableView, public EmuAppHelper<OptionCategoryView>
+class OptionCategoryView : public TableView, public EmuAppHelper
 {
 public:
-	OptionCategoryView(ViewAttachParams attach, EmuAudio &audio, EmuVideoLayer &videoLayer);
+	OptionCategoryView(ViewAttachParams attach);
 
 protected:
-	TextMenuItem subConfig[7];
+	TextMenuItem subConfig[8];
 };
 
-static void onScanStatus(EmuApp &app, unsigned status, int arg);
+static void onScanStatus(EmuApp &app, BluetoothScanState status, int arg);
 
 template <class ViewT>
-static void handledFailedBTAdapterInit(ViewT &view, ViewAttachParams attach, const Input::Event &e)
+static void handledFailedBTAdapterInit(ViewT& view, [[maybe_unused]] ViewAttachParams attach, [[maybe_unused]] const Input::Event& e)
 {
 	view.app().postErrorMessage("Unable to initialize Bluetooth adapter");
 	#ifdef CONFIG_BLUETOOTH_BTSTACK
@@ -80,7 +81,7 @@ MainMenuView::MainMenuView(ViewAttachParams attach, bool customMenu):
 		{
 			if(!system().hasContent())
 				return;
-			pushAndShow(EmuApp::makeView(attachParams(), EmuApp::ViewID::SYSTEM_ACTIONS), e);
+			pushAndShow(app().makeView(attachParams(), EmuApp::ViewID::SYSTEM_ACTIONS), e);
 		}
 	},
 	recentGames
@@ -107,7 +108,7 @@ MainMenuView::MainMenuView(ViewAttachParams attach, bool customMenu):
 		"Options", attach,
 		[this](const Input::Event &e)
 		{
-			pushAndShow(makeView<OptionCategoryView>(*audio, *videoLayer), e);
+			pushAndShow(makeView<OptionCategoryView>(), e);
 		}
 	},
 	onScreenInputManager
@@ -139,10 +140,11 @@ MainMenuView::MainMenuView(ViewAttachParams attach, bool customMenu):
 		"Scan for Wiimotes/iCP/JS1", attach,
 		[this](const Input::Event &e)
 		{
-			if(app().bluetoothAdapter())
+			app().bluetoothAdapter.openDefault();
+			if(app().bluetoothAdapter.isOpen())
 			{
-				if(Bluetooth::scanForDevices(appContext(), *app().bluetoothAdapter(),
-					[this](BluetoothAdapter &, unsigned status, int arg)
+				if(Bluetooth::scanForDevices(appContext(), app().bluetoothAdapter,
+					[this](BluetoothAdapter &, BluetoothScanState status, int arg)
 					{
 						onScanStatus(app(), status, arg);
 					}))
@@ -174,21 +176,21 @@ MainMenuView::MainMenuView(ViewAttachParams attach, bool customMenu):
 			}
 		}
 	},
-	#ifdef CONFIG_BLUETOOTH_SERVER
 	acceptPS3ControllerConnection
 	{
 		"Scan for PS3 Controller", attach,
 		[this](const Input::Event &e)
 		{
-			if(app().bluetoothAdapter())
+			app().bluetoothAdapter.openDefault();
+			if(app().bluetoothAdapter.isOpen())
 			{
 				app().postMessage(4, "Prepare to push the PS button");
-				auto startedScan = Bluetooth::listenForDevices(appContext(), *app().bluetoothAdapter(),
-					[this](BluetoothAdapter &bta, unsigned status, int arg)
+				auto startedScan = Bluetooth::listenForDevices(appContext(), app().bluetoothAdapter,
+					[this](BluetoothAdapter&, BluetoothScanState status, int arg)
 					{
 						switch(status)
 						{
-							case BluetoothAdapter::INIT_FAILED:
+							case BluetoothScanState::InitFailed:
 							{
 								app().postErrorMessage(Config::envIsLinux ? 8 : 2,
 									Config::envIsLinux ?
@@ -196,7 +198,7 @@ MainMenuView::MainMenuView(ViewAttachParams attach, bool customMenu):
 										"Bluetooth setup failed");
 								break;
 							}
-							case BluetoothAdapter::SCAN_COMPLETE:
+							case BluetoothScanState::Complete:
 							{
 								app().postMessage(4, "Push the PS button on your controller\n(see website for pairing help)");
 								break;
@@ -216,7 +218,6 @@ MainMenuView::MainMenuView(ViewAttachParams attach, bool customMenu):
 			postDraw();
 		}
 	},
-	#endif
 	about
 	{
 		"About", attach,
@@ -240,11 +241,11 @@ MainMenuView::MainMenuView(ViewAttachParams attach, bool customMenu):
 	}
 }
 
-static void onScanStatus(EmuApp &app, unsigned status, int arg)
+static void onScanStatus(EmuApp &app, BluetoothScanState status, int arg)
 {
 	switch(status)
 	{
-		case BluetoothAdapter::INIT_FAILED:
+		case BluetoothScanState::InitFailed:
 		{
 			if(Config::envIsIOS)
 			{
@@ -252,33 +253,33 @@ static void onScanStatus(EmuApp &app, unsigned status, int arg)
 			}
 			break;
 		}
-		case BluetoothAdapter::SCAN_FAILED:
+		case BluetoothScanState::Failed:
 		{
 			app.postErrorMessage("Scan failed");
 			break;
 		}
-		case BluetoothAdapter::SCAN_NO_DEVS:
+		case BluetoothScanState::NoDevs:
 		{
 			app.postMessage("No devices found");
 			break;
 		}
-		case BluetoothAdapter::SCAN_PROCESSING:
+		case BluetoothScanState::Processing:
 		{
 			app.postMessage(2, 0, std::format("Checking {} device(s)...", arg));
 			break;
 		}
-		case BluetoothAdapter::SCAN_NAME_FAILED:
+		case BluetoothScanState::NameFailed:
 		{
 			app.postErrorMessage("Failed reading a device name");
 			break;
 		}
-		case BluetoothAdapter::SCAN_COMPLETE:
+		case BluetoothScanState::Complete:
 		{
 			int devs = Bluetooth::pendingDevs();
 			if(devs)
 			{
 				app.postMessage(2, 0, std::format("Connecting to {} device(s)...", devs));
-				Bluetooth::connectPendingDevs(app.bluetoothAdapter());
+				Bluetooth::connectPendingDevs(app.bluetoothAdapter);
 			}
 			else
 			{
@@ -286,7 +287,8 @@ static void onScanStatus(EmuApp &app, unsigned status, int arg)
 			}
 			break;
 		}
-		/*case BluetoothAdapter::SOCKET_OPEN_FAILED:
+		case BluetoothScanState::Cancelled: break;
+		/*case BluetoothScanState::SocketOpenFailed:
 		{
 			app.postErrorMessage("Failed opening a Bluetooth connection");
 		}*/
@@ -306,7 +308,7 @@ void MainMenuView::loadFileBrowserItems()
 {
 	item.emplace_back(&loadGame);
 	item.emplace_back(&recentGames);
-	if(EmuSystem::hasBundledGames && app().showsBundledGames())
+	if(EmuSystem::hasBundledGames && app().showsBundledGames)
 	{
 		item.emplace_back(&bundledGames);
 	}
@@ -318,23 +320,16 @@ void MainMenuView::loadStandardItems()
 	item.emplace_back(&onScreenInputManager);
 	item.emplace_back(&inputManager);
 	item.emplace_back(&options);
-	if(used(scanWiimotes) && app().showsBluetoothScanItems())
+	if(used(scanWiimotes) && app().showsBluetoothScan)
 	{
 		item.emplace_back(&scanWiimotes);
-		#ifdef CONFIG_BLUETOOTH_SERVER
-		item.emplace_back(&acceptPS3ControllerConnection);
-		#endif
+		if(used(acceptPS3ControllerConnection))
+			item.emplace_back(&acceptPS3ControllerConnection);
 		item.emplace_back(&bluetoothDisconnect);
 	}
 	item.emplace_back(&benchmark);
 	item.emplace_back(&about);
 	item.emplace_back(&exitApp);
-}
-
-void MainMenuView::setAudioVideo(EmuAudio &audio_, EmuVideoLayer &videoLayer_)
-{
-	audio = &audio_;
-	videoLayer = &videoLayer_;
 }
 
 void MainMenuView::reloadItems()
@@ -344,51 +339,62 @@ void MainMenuView::reloadItems()
 	loadStandardItems();
 }
 
-OptionCategoryView::OptionCategoryView(ViewAttachParams attach, EmuAudio &audio, EmuVideoLayer &videoLayer):
+OptionCategoryView::OptionCategoryView(ViewAttachParams attach):
 	TableView
 	{
 		"Options",
 		attach,
-		[this](const TableView &) { return EmuApp::hasGooglePlayStoreFeatures() ? std::size(subConfig) : std::size(subConfig)-1; },
-		[this](const TableView &, size_t idx) -> MenuItem& { return subConfig[idx]; }
+		[this](ItemMessage msg) -> ItemReply
+		{
+			return msg.visit(overloaded
+			{
+				[&](const ItemsMessage&) -> ItemReply { return EmuApp::hasGooglePlayStoreFeatures() ? std::size(subConfig) : std::size(subConfig)-1; },
+				[&](const GetItemMessage& m) -> ItemReply { return &subConfig[m.idx]; },
+			});
+		}
 	},
 	subConfig
 	{
 		{
-			"Video", attach,
-			[this, &videoLayer](const Input::Event &e)
+			"Frame Timing", attach,
+			[this](const Input::Event &e)
 			{
-				auto view = EmuApp::makeView(attachParams(), EmuApp::ViewID::VIDEO_OPTIONS);
-				static_cast<VideoOptionView*>(view.get())->setEmuVideoLayer(videoLayer);
-				pushAndShow(std::move(view), e);
+				pushAndShow(makeView<FrameTimingView>(), e);
+			}
+		},
+		{
+			"Video", attach,
+			[this](const Input::Event &e)
+			{
+				pushAndShow(app().makeView(attachParams(), EmuApp::ViewID::VIDEO_OPTIONS), e);
 			}
 		},
 		{
 			"Audio", attach,
-			[this, &audio](const Input::Event &e)
+			[this](const Input::Event &e)
 			{
-				pushAndShow(EmuApp::makeView(attachParams(), EmuApp::ViewID::AUDIO_OPTIONS), e);
+				pushAndShow(app().makeView(attachParams(), EmuApp::ViewID::AUDIO_OPTIONS), e);
 			}
 		},
 		{
 			"System", attach,
 			[this](const Input::Event &e)
 			{
-				pushAndShow(EmuApp::makeView(attachParams(), EmuApp::ViewID::SYSTEM_OPTIONS), e);
+				pushAndShow(app().makeView(attachParams(), EmuApp::ViewID::SYSTEM_OPTIONS), e);
 			}
 		},
 		{
 			"File Paths", attach,
 			[this](const Input::Event &e)
 			{
-				pushAndShow(EmuApp::makeView(attachParams(), EmuApp::ViewID::FILE_PATH_OPTIONS), e);
+				pushAndShow(app().makeView(attachParams(), EmuApp::ViewID::FILE_PATH_OPTIONS), e);
 			}
 		},
 		{
 			"GUI", attach,
 			[this](const Input::Event &e)
 			{
-				pushAndShow(EmuApp::makeView(attachParams(), EmuApp::ViewID::GUI_OPTIONS), e);
+				pushAndShow(app().makeView(attachParams(), EmuApp::ViewID::GUI_OPTIONS), e);
 			}
 		},
 		{

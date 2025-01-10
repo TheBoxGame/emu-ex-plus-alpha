@@ -16,7 +16,6 @@
 #include <imagine/gfx/Renderer.hh>
 #include <imagine/gfx/opengl/GLRendererTask.hh>
 #include <imagine/thread/Thread.hh>
-#include <imagine/base/Error.hh>
 #include <imagine/logger/logger.h>
 #include "internalDefs.hh"
 #include <cassert>
@@ -75,7 +74,7 @@ bool GLTask::makeGLContext(GLTaskConfig config)
 				if(backgrounded)
 				{
 					runSync(
-						[&glContext = context](TaskContext ctx)
+						[&glContext = context](TaskContext)
 						{
 							// unset the drawable and finish all commands before entering background
 							if(GLManager::hasCurrentDrawable())
@@ -150,9 +149,9 @@ void GLTask::TaskContext::markSemaphoreNotified()
 	*semaphoreNeedsNotifyPtr = false;
 }
 
-static GLContextAttributes makeGLContextAttributes(int majorVersion, int minorVersion)
+static GLContextAttributes makeGLContextAttributes(GL::Version version)
 {
-	GLContextAttributes glAttr{majorVersion, minorVersion, glAPI};
+	GLContextAttributes glAttr{version, glAPI};
 	if(Config::DEBUG_BUILD)
 		glAttr.debug = true;
 	else
@@ -160,10 +159,9 @@ static GLContextAttributes makeGLContextAttributes(int majorVersion, int minorVe
 	return glAttr;
 }
 
-static GLContext makeVersionedGLContext(GLManager &mgr, GLBufferConfig config,
-	int majorVersion, int minorVersion)
+static GLContext makeVersionedGLContext(GLManager &mgr, GLBufferConfig config, GL::Version version)
 {
-	auto glAttr = makeGLContextAttributes(majorVersion, minorVersion);
+	auto glAttr = makeGLContextAttributes(version);
 	try
 	{
 		return mgr.makeContext(glAttr, config);
@@ -180,18 +178,18 @@ GLContext GLTask::makeGLContext(GLManager &mgr, GLBufferConfig bufferConf)
 	{
 		if(bufferConf.maySupportGLES(mgr.display(), 3))
 		{
-			auto ctx = makeVersionedGLContext(mgr, bufferConf, 3, 0);
+			auto ctx = makeVersionedGLContext(mgr, bufferConf, {3});
 			if(ctx)
 			{
 				return ctx;
 			}
 		}
 		// fall back to OpenGL ES 2.0
-		return makeVersionedGLContext(mgr, bufferConf, 2, 0);
+		return makeVersionedGLContext(mgr, bufferConf, {2});
 	}
 	else
 	{
-		auto ctx = makeVersionedGLContext(mgr, bufferConf, 3, 3);
+		auto ctx = makeVersionedGLContext(mgr, bufferConf, {3, 3});
 		if(ctx)
 		{
 			return ctx;

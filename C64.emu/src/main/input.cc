@@ -18,6 +18,7 @@
 #include <emuframework/keyRemappingUtils.hh>
 #include "MainSystem.hh"
 #include "MainApp.hh"
+#include <imagine/logger/logger.h>
 
 extern "C"
 {
@@ -28,6 +29,7 @@ extern "C"
 namespace EmuEx
 {
 
+constexpr SystemLogger log{"C64.emu"};
 bool EmuSystem::inputHasKeyboard = true;
 const int EmuSystem::maxPlayers = 2;
 
@@ -540,11 +542,6 @@ AssetDesc C64App::vControllerAssetDesc(KeyInfo key) const
 	}
 }
 
-static bool isEmuKeyInKeyboardRange(KeyCode emuKey)
-{
-	return emuKey >= KeyCode(C64Key::KeyboardFirstEnum) && emuKey <= KeyCode(C64Key::KeyboardLastEnum);
-}
-
 VController::KbMap C64System::vControllerKeyboardMap(VControllerKbMode mode)
 {
 	static constexpr VController::KbMap kbToEventMap =
@@ -590,7 +587,6 @@ static KeyCode shiftKeycodePositional(C64Key keycode)
 
 void C64System::handleKeyboardInput(InputAction a, bool positionalShift)
 {
-	//logMsg("key:%u %d", key, (int)action);
 	int mod{};
 	if(a.metaState & Input::Meta::SHIFT)
 	{
@@ -621,7 +617,7 @@ void C64System::handleInputAction(EmuApp *app, InputAction a)
 	{
 		case C64Key::Up ... C64Key::JSTrigger:
 		{
-			if(optionSwapJoystickPorts == JoystickMode::KEYBOARD)
+			if(effectiveJoystickMode == JoystickMode::Keyboard)
 			{
 				if(key == C64Key::Right)
 					handleKeyboardInput({KeyCode(C64Key::KeyboardRight), {}, a.state, a.metaState}, positionalShift);
@@ -638,7 +634,7 @@ void C64System::handleInputAction(EmuApp *app, InputAction a)
 			{
 				auto &joystick_value = *plugin.joystick_value;
 				auto player = a.flags.deviceId;
-				if(optionSwapJoystickPorts == JoystickMode::SWAPPED)
+				if(effectiveJoystickMode == JoystickMode::Port2)
 				{
 					player = (player == 1) ? 0 : 1;
 				}
@@ -659,20 +655,20 @@ void C64System::handleInputAction(EmuApp *app, InputAction a)
 						default: bug_unreachable();
 					}
 				}();
-				//logMsg("js %X p %d", key, player);
 				joystick_value[player] = IG::setOrClearBits(joystick_value[player], jsBits, a.isPushed());
 			}
 			break;
 		}
 		case C64Key::SwapJSPorts:
 		{
-			if(a.isPushed() && optionSwapJoystickPorts != JoystickMode::KEYBOARD)
+			if(a.isPushed() && effectiveJoystickMode != JoystickMode::Keyboard)
 			{
 				EmuSystem::sessionOptionSet();
-				if(optionSwapJoystickPorts == JoystickMode::SWAPPED)
-					optionSwapJoystickPorts = JoystickMode::NORMAL;
+				if(effectiveJoystickMode == JoystickMode::Port2)
+					joystickMode = JoystickMode::Port1;
 				else
-					optionSwapJoystickPorts = JoystickMode::SWAPPED;
+					joystickMode = JoystickMode::Port2;
+				effectiveJoystickMode = joystickMode;
 				IG::fill(*plugin.joystick_value);
 				if(app)
 					app->postMessage(1, false, "Swapped Joystick Ports");
@@ -689,8 +685,8 @@ void C64System::handleInputAction(EmuApp *app, InputAction a)
 		{
 			if(app)
 			{
-				logMsg("pushed restore key");
-				app->syncEmulationThread();
+				log.info("pushed restore key");
+				auto emuThreadResumer = app->suspendEmulationThread();
 				plugin.machine_set_restore_key(a.state == Input::Action::PUSHED);
 			}
 			break;
@@ -709,7 +705,7 @@ void C64System::handleInputAction(EmuApp *app, InputAction a)
 			if(app && a.isPushed())
 			{
 				bool active = app->defaultVController().keyboard().toggleShiftActive();
-				//logMsg("positional shift:%d", active);
+				//log.debug("positional shift:{}", active);
 				handleKeyboardInput({KeyCode(C64Key::KeyboardLeftShift), {}, active ? Input::Action::PUSHED : Input::Action::RELEASED});
 			}
 			break;
@@ -749,8 +745,15 @@ void C64System::onVKeyboardShown(VControllerKeyboard &kb, bool shown)
 
 void C64System::setJoystickMode(JoystickMode mode)
 {
-	optionSwapJoystickPorts = mode;
-	if(mode == JoystickMode::KEYBOARD)
+	joystickMode = mode;
+	effectiveJoystickMode = mode == JoystickMode::Auto ? defaultJoystickMode : mode;
+	updateJoystickDevices();
+}
+
+void C64System::updateJoystickDevices()
+{
+	enterCPUTrap();
+	if(effectiveJoystickMode == JoystickMode::Keyboard)
 	{
 		setIntResource("JoyPort1Device", JOYPORT_ID_NONE);
 		setIntResource("JoyPort2Device", JOYPORT_ID_NONE);
@@ -781,7 +784,7 @@ SystemInputDeviceDesc C64System::inputDeviceDesc(int idx) const
 signed long kbd_arch_keyname_to_keynum(char *keynamePtr)
 {
 	using namespace EmuEx;
-	//logMsg("kbd_arch_keyname_to_keynum(%s)", keyname);
+	//log.debug("kbd_arch_keyname_to_keynum({})", keyname);
 	std::string_view keyname{keynamePtr};
 	if(keyname == "F1") { return long(C64Key::KeyboardF1); }
 	else if(keyname == "F2") { return long(C64Key::KeyboardF2); }

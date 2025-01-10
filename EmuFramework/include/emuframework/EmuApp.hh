@@ -22,15 +22,13 @@
 #include <emuframework/EmuVideo.hh>
 #include <emuframework/EmuVideoLayer.hh>
 #include <emuframework/EmuInput.hh>
-#include <emuframework/Option.hh>
+#include <emuframework/EmuOptions.hh>
 #include <emuframework/AutosaveManager.hh>
 #include <emuframework/OutputTimingManager.hh>
 #include <emuframework/RecentContent.hh>
 #include <emuframework/RewindManager.hh>
 #include <imagine/input/inputDefs.hh>
 #include <imagine/gui/ViewManager.hh>
-#include <imagine/gui/TextEntry.hh>
-#include <imagine/gui/MenuItem.hh>
 #include <imagine/gui/ToastView.hh>
 #include <imagine/fs/FSDefs.hh>
 #include <imagine/base/ApplicationContext.hh>
@@ -41,20 +39,20 @@
 #include <imagine/gfx/Renderer.hh>
 #include <imagine/data-type/image/PixmapReader.hh>
 #include <imagine/data-type/image/PixmapWriter.hh>
+#include <imagine/bluetooth/BluetoothAdapter.hh>
 #include <imagine/font/Font.hh>
 #include <imagine/util/used.hh>
 #include <imagine/util/enum.hh>
 #include <cstring>
-#include <optional>
 #include <span>
 #include <string>
 
 namespace IG
 {
-class BluetoothAdapter;
 class FileIO;
 class BasicNavView;
 class YesNoAlertView;
+class ToastView;
 }
 
 namespace EmuEx
@@ -63,11 +61,9 @@ namespace EmuEx
 struct MainWindowData;
 class EmuMainMenuView;
 class EmuViewController;
-
-enum class Tristate : uint8_t
-{
-	OFF, IN_EMU, ON
-};
+class Cheat;
+class CheatsView;
+class BaseEditCheatsView;
 
 WISE_ENUM_CLASS((AssetFileID, size_t),
 	ui,
@@ -111,17 +107,6 @@ struct AssetDesc
 	constexpr auto filename() const { return assetFilename[fileIdx()]; }
 };
 
-enum class ScanValueMode
-{
-	NORMAL, ALLOW_BLANK
-};
-
-WISE_ENUM_CLASS((ImageChannel, uint8_t),
-	All,
-	Red,
-	Green,
-	Blue);
-
 enum class AltSpeedMode
 {
 	fast, slow
@@ -135,9 +120,18 @@ WISE_ENUM_CLASS((CPUAffinityMode, uint8_t),
 	Auto, Any, Manual
 );
 
-struct SystemKeyInputFlags
+struct DrawableConfig
 {
-	bool allowTurboModifier{true};
+	Property<PixelFormat, CFGKEY_WINDOW_PIXEL_FORMAT> pixelFormat;
+	Property<Gfx::ColorSpace, CFGKEY_VIDEO_COLOR_SPACE> colorSpace;
+
+	constexpr DrawableConfig() = default;
+	constexpr DrawableConfig(Gfx::DrawableConfig c)
+	{
+		pixelFormat.setUnchecked(c.pixelFormat);
+		colorSpace.setUnchecked(c.colorSpace);
+	}
+	constexpr operator Gfx::DrawableConfig() const { return {.pixelFormat = pixelFormat, .colorSpace = colorSpace}; }
 };
 
 constexpr float menuVideoBrightnessScale = .25f;
@@ -157,8 +151,6 @@ public:
 		SYSTEM_OPTIONS,
 		FILE_PATH_OPTIONS,
 		GUI_OPTIONS,
-		EDIT_CHEATS,
-		LIST_CHEATS,
 	};
 
 	// Static app configuration
@@ -176,6 +168,8 @@ public:
 	// optional sub-class API functions
 	bool willCreateSystem(ViewAttachParams, const Input::Event &);
 	static bool allowsTurboModifier(KeyCode);
+	std::unique_ptr<View> makeEditCheatsView(ViewAttachParams, CheatsView&);
+	std::unique_ptr<View> makeEditCheatView(ViewAttachParams, Cheat&, BaseEditCheatsView&);
 
 	void mainInitCommon(IG::ApplicationInitParams, IG::ApplicationContext);
 	static void onCustomizeNavView(NavView &v);
@@ -186,11 +180,6 @@ public:
 	void reloadSystem(EmuSystemCreateParams params = {});
 	void onSystemCreated();
 	void promptSystemReloadDueToSetOption(ViewAttachParams, const Input::Event &, EmuSystemCreateParams params = {});
-	void pushAndShowNewCollectTextInputView(ViewAttachParams, const Input::Event &,
-		const char *msgText, const char *initialContent, CollectTextInputView::OnTextDelegate);
-	void pushAndShowNewYesNoAlertView(ViewAttachParams, const Input::Event &,
-		const char *label, const char *choice1, const char *choice2,
-		TextMenuItem::SelectDelegate onYes, TextMenuItem::SelectDelegate onNo);
 	void pushAndShowModalView(std::unique_ptr<View> v, const Input::Event &);
 	void pushAndShowModalView(std::unique_ptr<View> v);
 	void popModalViews();
@@ -212,67 +201,63 @@ public:
 	void readState(std::span<uint8_t> buff);
 	size_t writeState(std::span<uint8_t> buff, SaveStateFlags = {});
 	DynArray<uint8_t> saveState();
-	bool saveState(CStringView path);
-	bool saveStateWithSlot(int slot);
+	bool saveState(CStringView path, bool notify);
+	bool saveStateWithSlot(int slot, bool notify);
 	bool loadState(CStringView path);
 	bool loadStateWithSlot(int slot);
 	bool shouldOverwriteExistingState() const;
-	const auto &contentSearchPath() const { return contentSearchPath_; }
-	FS::PathString contentSearchPath(std::string_view name) const;
-	void setContentSearchPath(std::string_view path);
+	FS::PathString inContentSearchPath(std::string_view name) const;
 	FS::PathString validSearchPath(const FS::PathString &) const;
 	static void updateLegacySavePath(IG::ApplicationContext, CStringView path);
 	auto screenshotDirectory() const { return system().userPath(userScreenshotPath); }
-	static std::unique_ptr<View> makeCustomView(ViewAttachParams attach, ViewID id);
-	bool handleKeyInput(KeyInfo, const Input::Event &srcEvent);
-	bool handleAppActionKeyInput(InputAction, const Input::Event &srcEvent);
-	void handleSystemKeyInput(KeyInfo, Input::Action, uint32_t metaState = 0, SystemKeyInputFlags flags = {});
-	void runTurboInputEvents();
+	std::unique_ptr<View> makeCustomView(ViewAttachParams attach, ViewID id);
+	bool handleKeyInput(KeyInfo i, const Input::Event &srcEvent) { return inputManager.handleKeyInput(*this, i, srcEvent); }
+	bool handleAppActionKeyInput(InputAction a, const Input::Event &srcEvent) { return inputManager.handleAppActionKeyInput(*this, a, srcEvent); }
+	void handleSystemKeyInput(KeyInfo i, Input::Action a, uint32_t metaState = 0, SystemKeyInputFlags flags = {}) { inputManager.handleSystemKeyInput(*this, i, a, metaState, flags); }
 	void resetInput();
 	void setRunSpeed(double speed);
 	void saveSessionOptions();
 	void loadSessionOptions();
 	bool hasSavedSessionOptions();
+	void resetSessionOptions();
 	void deleteSessionOptions();
-	void syncEmulationThread();
+	[[nodiscard]]
+	EmuSystemTask::SuspendContext suspendEmulationThread();
 	void startAudio();
-	EmuAudio &audio() { return emuAudio; }
-	EmuVideo &video() { return emuVideo; }
-	EmuVideoLayer &videoLayer() { return emuVideoLayer; }
 	EmuViewController &viewController();
 	const EmuViewController &viewController() const;
 	IG::ToastView &toastView();
 	const Screen &emuScreen() const;
 	Window &emuWindow();
 	const Window &emuWindow() const;
-	AutosaveManager &autosaveManager() { return autosaveManager_; }
 	FrameTimeConfig configFrameTime();
 	void setDisabledInputKeys(std::span<const KeyCode> keys);
 	void unsetDisabledInputKeys();
 	Gfx::TextureSpan asset(AssetID) const;
 	Gfx::TextureSpan asset(AssetDesc) const;
+	Gfx::TextureSpan collectTextCloseAsset() const;
 	VController &defaultVController() { return inputManager.vController; }
-	static std::unique_ptr<View> makeView(ViewAttachParams, ViewID);
+	std::unique_ptr<View> makeView(ViewAttachParams, ViewID);
 	std::unique_ptr<YesNoAlertView> makeCloseContentView();
-	void applyOSNavStyle(IG::ApplicationContext, bool inGame);
+	void applyOSNavStyle(IG::ApplicationContext, bool inEmu);
 	void setCPUNeedsLowLatency(IG::ApplicationContext, bool needed);
 	bool advanceFrames(FrameParams, EmuSystemTask *);
 	void runFrames(EmuSystemTaskContext, EmuVideo *, EmuAudio *, int frames);
 	void skipFrames(EmuSystemTaskContext, int frames, EmuAudio *);
 	bool skipForwardFrames(EmuSystemTaskContext, int frames);
 	void notifyWindowPresented();
-	IG::Audio::Manager &audioManager() { return audioManager_; }
+	void reportFrameWorkTime();
+	void addOnFrameDelayed();
+	void addOnFrame();
+	void removeOnFrame();
 	void renderSystemFramebuffer(EmuVideo &);
+	void renderSystemFramebuffer() { renderSystemFramebuffer(video); }
 	bool writeScreenshot(IG::PixmapView, CStringView path);
 	FS::PathString makeNextScreenshotFilename();
 	bool mogaManagerIsActive() const { return bool(mogaManagerPtr); }
 	void setMogaManagerActive(bool on, bool notify);
-	constexpr IG::VibrationManager &vibrationManager() { return vibrationManager_; }
-	BluetoothAdapter *bluetoothAdapter();
 	void closeBluetoothConnections();
 	ViewAttachParams attachParams();
-	auto &customKeyConfigList() { return inputManager.customKeyConfigs; };
-	auto &savedInputDeviceList() { return inputManager.savedInputDevs; };
 	IG::Viewport makeViewport(const Window &win) const;
 	void setEmuViewOnExtraWindow(bool on, IG::Screen &);
 	void record(FrameTimeStatEvent, SteadyClockTimePoint t = {});
@@ -291,31 +276,18 @@ public:
 
 	// Video Options
 	bool setWindowDrawableConfig(Gfx::DrawableConfig);
-	Gfx::DrawableConfig windowDrawableConfig() const { return windowDrawableConf; }
 	IG::PixelFormat windowPixelFormat() const;
-	void setRenderPixelFormat(std::optional<IG::PixelFormat>);
-	IG::PixelFormat renderPixelFormat() const { return renderPixelFmt; }
+	void setRenderPixelFormat(IG::PixelFormat);
 	bool setVideoAspectRatio(float val);
 	float videoAspectRatio() const;
 	float defaultVideoAspectRatio() const;
 	IG::PixelFormat videoEffectPixelFormat() const;
-	auto &videoEffectPixelFormatOption() { return optionImageEffectPixelFormat; }
-	void setFrameInterval(int);
-	int frameInterval() const;
-	bool setVideoZoom(uint8_t val);
-	uint8_t videoZoom() const { return optionImageZoom; }
-	bool setViewportZoom(uint8_t val);
-	uint8_t viewportZoom() { return optionViewportZoom; }
-	auto &showOnSecondScreenOption() { return optionShowOnSecondScreen; }
-	auto &textureBufferModeOption() { return optionTextureBufferMode; }
+	bool setContentScale(uint8_t val);
+	bool setMenuScale(int8_t val);
+	bool supportsShowOnSecondScreen(ApplicationContext ctx) { return ctx.androidSDK() >= 17; }
 	void setContentRotation(IG::Rotation);
-	Rotation contentRotation() const { return contentRotation_; }
 	void updateVideoContentRotation();
 	void updateContentRotation();
-	float videoBrightness(ImageChannel) const;
-	const Gfx::Vec3 &videoBrightnessAsRGB() const { return videoBrightnessRGB; }
-	int videoBrightnessAsInt(ImageChannel ch) const { return videoBrightness(ch) * 100.f; }
-	void setVideoBrightness(float brightness, ImageChannel);
 	Gfx::PresentMode effectivePresentMode() const
 	{
 		if(frameTimeSource == FrameTimeSource::Renderer)
@@ -329,7 +301,7 @@ public:
 
 	// System Options
 	bool setAltSpeed(AltSpeedMode mode, int16_t speed);
-	int16_t altSpeed(AltSpeedMode mode) const { return altSpeedRef(mode); }
+	int16_t altSpeed(AltSpeedMode mode) const { return mode == AltSpeedMode::slow ? slowModeSpeed.value() : fastModeSpeed.value(); }
 	double altSpeedAsDouble(AltSpeedMode mode) const { return altSpeed(mode) / 100.; }
 	void setCPUAffinity(int cpuNumber, bool on);
 	bool cpuAffinity(int cpuNumber) const;
@@ -337,28 +309,18 @@ public:
 
 	// GUI Options
 	void setIdleDisplayPowerSave(bool on);
-	bool idleDisplayPowerSave() const { return idleDisplayPowerSave_; }
 	bool setFontSize(int size); // size in micro-meters
-	int fontSize() const;
 	void applyFontSize(Window &win);
 	IG::FontSettings fontSettings(Window &win) const;
 	void setShowsTitleBar(bool on);
-	bool showsTitleBar() const { return optionTitleBar; };
-	void setLowProfileOSNavMode(Tristate mode);
-	void setHideOSNavMode(Tristate mode);
-	void setHideStatusBarMode(Tristate mode);
-	Tristate lowProfileOSNavMode() const { return (Tristate)(uint8_t)optionLowProfileOSNav; }
-	Tristate hideOSNavMode() const { return (Tristate)(uint8_t)optionHideOSNav; }
-	Tristate hideStatusBarMode() const { return optionHideStatusBar; }
+	void setLowProfileOSNavMode(InEmuTristate mode);
+	void setHideOSNavMode(InEmuTristate mode);
+	void setHideStatusBarMode(InEmuTristate mode);
 	void setEmuOrientation(Orientations);
 	void setMenuOrientation(Orientations);
-	Orientations emuOrientation() const { return optionEmuOrientation; }
-	Orientations menuOrientation() const { return optionMenuOrientation; }
 	void setShowsBundledGames(bool);
-	bool showsBundledGames() const { return optionShowBundledGames; }
-	auto &notificationIconOption() { return optionNotificationIcon; }
+	auto canShowNotificationIcon(IG::ApplicationContext ctx) { return Config::envIsAndroid && ctx.androidSDK() < 17; }
 	void setShowsBluetoothScanItems(bool on);
-	bool showsBluetoothScanItems() const { return optionShowBluetoothScan; }
 	void setLayoutBehindSystemUI(bool);
 	bool doesLayoutBehindSystemUI() const { return layoutBehindSystemUI; };
 
@@ -374,6 +336,7 @@ public:
 
 	void postMessage(int secs, bool error, UTF16Convertible auto &&msg)
 	{
+		auto suspendCtx = suspendEmulationThread();
 		toastView().post(IG_forward(msg), secs, error);
 	}
 
@@ -387,236 +350,134 @@ public:
 		postMessage(secs, true, IG_forward(msg));
 	}
 
-	template <std::same_as<const char*> T>
-	static std::pair<T, int> scanValue(const char *str, ScanValueMode mode)
+	void forEachKeyConfig(Input::Map map, auto&& func) const
 	{
-		return {str, mode == ScanValueMode::ALLOW_BLANK || strlen(str) ? 1 : 0};
-	}
-
-	template <std::integral T>
-	static std::pair<T, int> scanValue(const char *str, ScanValueMode)
-	{
-		int val;
-		int items = sscanf(str, "%d", &val);
-		return {val, items};
-	}
-
-	template <std::floating_point T>
-	static std::pair<T, int> scanValue(const char *str, ScanValueMode)
-	{
-		T val, denom;
-		int items = sscanf(str, std::is_same_v<T, double> ? "%lf /%lf" : "%f /%f", &val, &denom);
-		if(items > 1 && denom != 0)
+		for(auto& confPtr : inputManager.customKeyConfigs)
 		{
-			val /= denom;
+			auto& conf = *confPtr;
+			if(conf.desc().map == map)
+			{
+				func(conf);
+			}
 		}
-		return {val, items};
-	}
-
-	template <class T>
-	requires std::same_as<T, std::pair<float, float>> || std::same_as<T, std::pair<double, double>>
-	static std::pair<T, int> scanValue(const char *str, ScanValueMode)
-	{
-		// special case for getting a fraction
-		using PairValue = typename T::first_type;
-		PairValue val, denom{};
-		int items = sscanf(str, std::is_same_v<PairValue, double> ? "%lf /%lf" : "%f /%f", &val, &denom);
-		if(denom == 0)
+		for(const auto& conf : defaultKeyConfigs())
 		{
-			denom = 1.;
+			if(conf.map == map)
+			{
+				func(conf);
+			}
 		}
-		return {{val, denom}, items};
 	}
 
-	template <class T>
-	requires std::same_as<T, std::pair<int, int>>
-	static std::pair<T, int> scanValue(const char *str, ScanValueMode)
-	{
-		using PairValue = typename T::first_type;
-		PairValue val, val2{};
-		int items = sscanf(str, "%d %d", &val, &val2);
-		return {{val, val2}, items};
-	}
-
-	template<class T, ScanValueMode mode = ScanValueMode::NORMAL>
-	void pushAndShowNewCollectValueInputView(ViewAttachParams attach, const Input::Event &e,
-		CStringView msgText, CStringView initialContent, IG::Callable<bool, EmuApp&, T> auto &&collectedValueFunc)
-	{
-		pushAndShowNewCollectTextInputView(attach, e, msgText, initialContent,
-			[collectedValueFunc](CollectTextInputView &view, const char *str)
-			{
-				if(!str)
-				{
-					view.dismiss();
-					return false;
-				}
-				auto &app = get(view.appContext());
-				auto [val, items] = scanValue<T>(str, mode);
-				if(items <= 0)
-				{
-					app.postErrorMessage("Enter a value");
-					return true;
-				}
-				else if(!collectedValueFunc(app, val))
-				{
-					return true;
-				}
-				else
-				{
-					view.dismiss();
-					return false;
-				}
-			});
-	}
-
-	template<class T, T low, T high>
-	void pushAndShowNewCollectValueRangeInputView(ViewAttachParams attach, const Input::Event &e,
-		CStringView msgText, CStringView initialContent, IG::Callable<bool, EmuApp&, T> auto &&collectedValueFunc)
-	{
-		pushAndShowNewCollectValueInputView<T>(attach, e, msgText, initialContent,
-			[collectedValueFunc](EmuApp &app, auto val)
-			{
-				if(val >= low && val <= high)
-				{
-					return collectedValueFunc(app, val);
-				}
-				else
-				{
-					app.postErrorMessage("Value not in range");
-					return false;
-				}
-			});
-	}
-
-	template<class T, T low, T high, T low2, T high2>
-	void pushAndShowNewCollectValuePairRangeInputView(ViewAttachParams attach, const Input::Event &e,
-		CStringView msgText, CStringView initialContent, Callable<bool, EmuApp&, std::pair<T, T>> auto &&collectedValueFunc)
-	{
-		pushAndShowNewCollectValueInputView<std::pair<T, T>>(attach, e, msgText, initialContent,
-			[collectedValueFunc](EmuApp &app, auto val)
-			{
-				if(val.first >= low && val.first <= high && val.second >= low2 && val.second <= high2)
-				{
-					return collectedValueFunc(app, val);
-				}
-				else
-				{
-					app.postErrorMessage("Values not in range");
-					return false;
-				}
-			});
-	}
-
-protected:
+public:
 	IG::FontManager fontManager;
 	mutable Gfx::Renderer renderer;
 	ViewManager viewManager;
-	IG::Audio::Manager audioManager_;
-	EmuAudio emuAudio;
-	EmuVideo emuVideo;
-	EmuVideoLayer emuVideoLayer;
-	EmuSystemTask emuSystemTask;
-	mutable Gfx::Texture assetBuffImg[wise_enum::size<AssetFileID>];
-	AutosaveManager autosaveManager_;
-public:
+	EmuAudio audio;
+	EmuVideo video;
+	EmuVideoLayer videoLayer;
+	AutosaveManager autosaveManager{*this};
 	InputManager inputManager;
 	OutputTimingManager outputTimingManager;
-	RewindManager rewindManager;
-	IG_UseMemberIf(enableFrameTimeStats, FrameTimeStats, frameTimeStats);
+	RewindManager rewindManager{*this};
+	ConditionalMember<enableFrameTimeStats, FrameTimeStats> frameTimeStats;
+	[[no_unique_address]] IG::VibrationManager vibrationManager;
 protected:
-	Gfx::Vec3 videoBrightnessRGB{1.f, 1.f, 1.f};
-	FS::PathString contentSearchPath_;
+	EmuSystemTask emuSystemTask{*this};
+	std::binary_semaphore framePresentedSem{0};
+	int savedAdvancedFrames{};
+	mutable Gfx::Texture assetBuffImg[wise_enum::size<AssetFileID>];
 	[[no_unique_address]] IG::Data::PixmapReader pixmapReader;
 	[[no_unique_address]] IG::Data::PixmapWriter pixmapWriter;
-	[[no_unique_address]] IG::VibrationManager vibrationManager_;
 	[[no_unique_address]] PerformanceHintManager perfHintManager;
 	[[no_unique_address]] PerformanceHintSession perfHintSession;
-	BluetoothAdapter *bta{};
-	IG_UseMemberIf(MOGA_INPUT, std::unique_ptr<Input::MogaManager>, mogaManagerPtr);
-public:
-	RecentContent recentContent;
-	std::string userScreenshotPath;
-protected:
-	IG_UseMemberIf(Config::cpuAffinity, CPUMask, cpuAffinityMask){};
-	int savedAdvancedFrames{};
-	static constexpr int16_t defaultFastModeSpeed{800};
-	static constexpr int16_t defaultSlowModeSpeed{50};
-	int16_t fastModeSpeed{defaultFastModeSpeed};
-	int16_t slowModeSpeed{defaultSlowModeSpeed};
-	int16_t defaultFontSize = Config::MACHINE_IS_PANDORA ? 6500 :
-		(Config::envIsIOS || Config::envIsAndroid) ? 3000 :
-		8000;
-	int16_t optionFontSize{defaultFontSize};
-	int8_t optionFrameInterval{1};
-	Byte1Option optionNotificationIcon;
-	Byte1Option optionTitleBar;
-	IG_UseMemberIf(Config::NAVIGATION_BAR, Byte1Option, optionLowProfileOSNav);
-	IG_UseMemberIf(Config::NAVIGATION_BAR, Byte1Option, optionHideOSNav);
-	IG_UseMemberIf(Config::STATUS_BAR, Tristate, optionHideStatusBar){Tristate::IN_EMU};
-	Orientations optionEmuOrientation;
-	Orientations optionMenuOrientation;
-	bool optionShowBundledGames{true};
-	IG_UseMemberIf(Config::Input::BLUETOOTH, Byte1Option, optionShowBluetoothScan);
-	Byte1Option optionImageEffectPixelFormat;
-	Byte1Option optionImageZoom;
-	Byte1Option optionViewportZoom;
-	Byte1Option optionShowOnSecondScreen;
-	Byte1Option optionTextureBufferMode;
-	Gfx::DrawableConfig windowDrawableConf;
-	IG::PixelFormat renderPixelFmt;
-	IG::Rotation contentRotation_{IG::Rotation::ANY};
-	IG_UseMemberIf(Config::TRANSLUCENT_SYSTEM_UI, bool, layoutBehindSystemUI){};
-	bool idleDisplayPowerSave_{};
+	ConditionalMember<MOGA_INPUT, std::unique_ptr<Input::MogaManager>> mogaManagerPtr;
+	ConditionalMember<Config::TRANSLUCENT_SYSTEM_UI, bool> layoutBehindSystemUI{};
 	bool enableBlankFrameInsertion{};
 public:
-	bool showHiddenFilesInPicker{};
-	bool confirmOverwriteState{true};
-	bool systemActionsIsDefaultMenu{true};
-	IG_UseMemberIf(Config::windowFocus, bool, pauseUnfocused){true};
-	IG_UseMemberIf(Config::envIsAndroid, bool, useSustainedPerformanceMode){};
-	IG_UseMemberIf(Config::Input::BLUETOOTH && Config::BASE_CAN_BACKGROUND_APP, bool, keepBluetoothActive){};
-	IG_UseMemberIf(Config::Input::DEVICE_HOTSWAP, bool, notifyOnInputDeviceChange){true};
-	IG_UseMemberIf(Config::multipleScreenFrameRates, FrameRate, overrideScreenFrameRate){};
-	FrameTimeSource frameTimeSource{FrameTimeSource::Unset};
-	IG_UseMemberIf(Config::cpuAffinity, CPUAffinityMode, cpuAffinityMode){CPUAffinityMode::Auto};
-	IG_UseMemberIf(Config::envIsAndroid && Config::DEBUG_BUILD, bool, useNoopThread){};
-	IG_UseMemberIf(enableFrameTimeStats, bool, showFrameTimeStats){};
-	IG_UseMemberIf(Gfx::supportsPresentModes, Gfx::PresentMode, presentMode){};
-	IG_UseMemberIf(Gfx::supportsPresentationTime, PresentationTimeMode, presentationTimeMode){PresentationTimeMode::basic};
-	bool allowBlankFrameInsertion{};
+	DrawableConfig windowDrawableConfig;
+	BluetoothAdapter bluetoothAdapter;
+	RecentContent recentContent;
+	FS::PathString contentSearchPath;
+	std::string userScreenshotPath;
+	Property<IG::PixelFormat, CFGKEY_RENDER_PIXEL_FORMAT,
+		PropertyDesc<IG::PixelFormat>{.isValid = renderPixelFormatIsValid}> renderPixelFormat;
+	ConditionalProperty<Config::cpuAffinity, CPUMask, CFGKEY_CPU_AFFINITY_MASK> cpuAffinityMask;
+	Property<int16_t, CFGKEY_FAST_MODE_SPEED,
+		PropertyDesc<int16_t>{.defaultValue = 800, .isValid = isValidFastSpeed}> fastModeSpeed;
+	Property<int16_t, CFGKEY_SLOW_MODE_SPEED,
+		PropertyDesc<int16_t>{.defaultValue = 50, .isValid = isValidSlowSpeed}> slowModeSpeed;
+	Property<int16_t, CFGKEY_FONT_Y_SIZE, PropertyDesc<int16_t>{
+		.defaultValue = Config::MACHINE_IS_PANDORA ? 6500 : (Config::envIsIOS || Config::envIsAndroid) ? 3000 : 8000,
+		.mutableDefault = true,
+		.isValid = isValidFontSize}> fontSize;
+	Property<int8_t, CFGKEY_FRAME_INTERVAL, PropertyDesc<int8_t>{.defaultValue = 1, .isValid = isValidFrameInterval}> frameInterval;
+	ConditionalProperty<Config::envIsAndroid, bool, CFGKEY_NOTIFICATION_ICON,
+		PropertyDesc<bool>{.defaultValue = true, .mutableDefault = true}> showsNotificationIcon;
+	ConditionalProperty<CAN_HIDE_TITLE_BAR, bool, CFGKEY_TITLE_BAR,
+		PropertyDesc<bool>{.defaultValue = true}> showsTitleBar;
+	ConditionalProperty<Config::NAVIGATION_BAR, InEmuTristate, CFGKEY_LOW_PROFILE_OS_NAV,
+		PropertyDesc<InEmuTristate>{.defaultValue = InEmuTristate::InEmu}> lowProfileOSNav;
+	ConditionalProperty<Config::NAVIGATION_BAR, InEmuTristate, CFGKEY_HIDE_OS_NAV,
+		PropertyDesc<InEmuTristate>{.defaultValue = InEmuTristate::Off, .mutableDefault = true}> hidesOSNav;
+	ConditionalProperty<Config::STATUS_BAR, InEmuTristate, CFGKEY_HIDE_STATUS_BAR,
+		PropertyDesc<InEmuTristate>{.defaultValue = InEmuTristate::InEmu}> hidesStatusBar;
+	Property<Orientations, CFGKEY_GAME_ORIENTATION> emuOrientation;
+	Property<Orientations, CFGKEY_MENU_ORIENTATION> menuOrientation;
+	Property<bool, CFGKEY_SHOW_BUNDLED_GAMES, PropertyDesc<bool>{.defaultValue = true}> showsBundledGames;
+	ConditionalProperty<Config::Input::BLUETOOTH, bool, CFGKEY_SHOW_BLUETOOTH_SCAN,
+		PropertyDesc<bool>{.defaultValue = true, .mutableDefault = true}> showsBluetoothScan;
+	Property<PixelFormatId, CFGKEY_IMAGE_EFFECT_PIXEL_FORMAT,
+		{.defaultValue = PixelFormatId::Unset, .isValid = imageEffectPixelFormatIsValid}> imageEffectPixelFormat;
+	Property<int8_t, CFGKEY_MENU_SCALE, PropertyDesc<int8_t>{.defaultValue = 100, .isValid = optionMenuScaleIsValid}> menuScale;
+	ConditionalProperty<Config::BASE_MULTI_WINDOW && Config::BASE_MULTI_SCREEN, bool, CFGKEY_SHOW_ON_2ND_SCREEN> showOnSecondScreen;
+	Property<Gfx::TextureBufferMode, CFGKEY_TEXTURE_BUFFER_MODE> textureBufferMode;
+	Property<Rotation, CFGKEY_CONTENT_ROTATION,
+		PropertyDesc<Rotation>{.defaultValue = Rotation::ANY, .isValid = enumIsValidUpToLast}> contentRotation;
+	Property<bool, CFGKEY_IDLE_DISPLAY_POWER_SAVE> idleDisplayPowerSave;
+	Property<bool, CFGKEY_SHOW_HIDDEN_FILES> showHiddenFilesInPicker;
+	Property<bool, CFGKEY_CONFIRM_OVERWRITE_STATE, PropertyDesc<bool>{.defaultValue = true}> confirmOverwriteState;
+	Property<bool, CFGKEY_SYSTEM_ACTIONS_IS_DEFAULT_MENU, PropertyDesc<bool>{.defaultValue = true}> systemActionsIsDefaultMenu;
+	ConditionalProperty<Config::windowFocus, bool, CFGKEY_PAUSE_UNFOCUSED, PropertyDesc<bool>{
+		.defaultValue = true}> pauseUnfocused;
+	ConditionalProperty<Config::envIsAndroid, bool, CFGKEY_SUSTAINED_PERFORMANCE_MODE> useSustainedPerformanceMode;
+	ConditionalProperty<Config::Input::BLUETOOTH && Config::BASE_CAN_BACKGROUND_APP, bool, CFGKEY_KEEP_BLUETOOTH_ACTIVE> keepBluetoothActive;
+	ConditionalProperty<Config::Input::DEVICE_HOTSWAP, bool, CFGKEY_NOTIFY_INPUT_DEVICE_CHANGE,
+		PropertyDesc<bool>{.defaultValue = true}> notifyOnInputDeviceChange;
+	ConditionalMember<Config::multipleScreenFrameRates, FrameRate> overrideScreenFrameRate{};
+	Property<FrameTimeSource, CFGKEY_FRAME_CLOCK, PropertyDesc<FrameTimeSource>{
+		.defaultValue = FrameTimeSource::Unset, .isValid = enumIsValidUpToLast}> frameTimeSource;
+	ConditionalProperty<Config::cpuAffinity, CPUAffinityMode, CFGKEY_CPU_AFFINITY_MODE,
+		PropertyDesc<CPUAffinityMode>{.defaultValue = CPUAffinityMode::Auto, .isValid = enumIsValidUpToLast}> cpuAffinityMode;
+	ConditionalMember<Config::envIsAndroid && Config::DEBUG_BUILD, bool> useNoopThread{};
+	ConditionalMember<enableFrameTimeStats, bool> showFrameTimeStats{};
+	ConditionalProperty<Gfx::supportsPresentModes, Gfx::PresentMode, CFGKEY_RENDERER_PRESENT_MODE,
+		PropertyDesc<Gfx::PresentMode>{.defaultValue = Gfx::PresentMode::Auto, .isValid = enumIsValidUpToLast}> presentMode;
+	ConditionalMember<Gfx::supportsPresentationTime, PresentationTimeMode> presentationTimeMode{PresentationTimeMode::basic};
+	Property<bool, CFGKEY_BLANK_FRAME_INSERTION> allowBlankFrameInsertion;
 
 protected:
 	struct ConfigParams
 	{
-		Gfx::DrawableConfig windowDrawableConf{};
+		Gfx::DrawableConfig windowDrawableConf;
 	};
 
 	void onMainWindowCreated(ViewAttachParams, const Input::Event &);
-	Gfx::TextureSpan collectTextCloseAsset() const;
 	ConfigParams loadConfigFile(IG::ApplicationContext);
 	void saveConfigFile(IG::ApplicationContext);
 	void saveConfigFile(FileIO &);
 	void initOptions(IG::ApplicationContext);
-	std::optional<IG::PixelFormat> renderPixelFormatOption() const;
 	void applyRenderPixelFormat();
-	std::optional<IG::PixelFormat> windowDrawablePixelFormatOption() const;
-	std::optional<Gfx::ColorSpace> windowDrawableColorSpaceOption() const;
 	FS::PathString sessionConfigPath();
 	void loadSystemOptions();
 	void saveSystemOptions();
 	void saveSystemOptions(FileIO &);
 	bool allWindowsAreFocused() const;
 	void configureSecondaryScreens();
-	void addOnFrameDelayed();
-	void addOnFrame();
-	void removeOnFrame();
 	IG::OnFrameDelegate onFrameDelayed(int8_t delay);
 	void addOnFrameDelegate(IG::OnFrameDelegate);
 	void onFocusChange(bool in);
 	void configureAppForEmulation(bool running);
-	int16_t &altSpeedRef(AltSpeedMode mode) { return mode == AltSpeedMode::slow ? slowModeSpeed : fastModeSpeed; }
-	const int16_t &altSpeedRef(AltSpeedMode mode) const { return mode == AltSpeedMode::slow ? slowModeSpeed : fastModeSpeed; }
-	void reportFrameWorkTime();
 };
 
 // Global instance access if required by the emulated system, valid if EmuApp::needsGlobalInstance initialized to true

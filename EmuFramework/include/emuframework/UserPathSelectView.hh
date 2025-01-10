@@ -24,11 +24,9 @@
 namespace EmuEx
 {
 
-class UserPathSelectView : public TableView, public EmuAppHelper<UserPathSelectView>
+class UserPathSelectView : public TableView, public EmuAppHelper
 {
 public:
-	using EmuAppHelper<UserPathSelectView>::app;
-
 	UserPathSelectView(UTF16Convertible auto &&name, ViewAttachParams attach, FS::PathString initialDir,
 		std::invocable<CStringView> auto &&onPathChange):
 		TableView{IG_forward(name), attach, item},
@@ -41,9 +39,10 @@ public:
 				auto &thisView = asThis(view);
 				fPicker->setPath(thisView.searchDir, e);
 				fPicker->setOnSelectPath(
-					[=](FSPicker &picker, CStringView path, std::string_view displayName, const Input::Event &e)
+					[=](FSPicker &picker, CStringView path, [[maybe_unused]] std::string_view displayName, const Input::Event&)
 					{
 						onPathChange(path);
+						picker.popTo();
 						picker.dismissPrevious();
 						picker.dismiss();
 					});

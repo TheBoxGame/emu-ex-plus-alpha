@@ -13,7 +13,6 @@
 	You should have received a copy of the GNU General Public License
 	along with Imagine.  If not, see <http://www.gnu.org/licenses/> */
 
-#include <imagine/base/EventLoop.hh>
 #include <imagine/base/Window.hh>
 #include <imagine/base/GLContext.hh>
 #include <imagine/base/sharedLibrary.hh>
@@ -57,17 +56,6 @@ std::string_view asString(Orientations o)
 	return "Unknown";
 }
 
-FDEventSource::FDEventSource(const char *debugLabel, MaybeUniqueFileDescriptor fd, EventLoop loop, PollEventDelegate callback, uint32_t events):
-	FDEventSource{debugLabel, std::move(fd)}
-{
-	attach(loop, callback, events);
-}
-
-bool FDEventSource::attach(PollEventDelegate callback, uint32_t events)
-{
-	return attach({}, callback, events);
-}
-
 SharedLibraryRef openSharedLibrary(const char *name, OpenSharedLibraryFlags flags)
 {
 	int mode = flags.resolveAllSymbols ? RTLD_NOW : RTLD_LAZY;
@@ -104,6 +92,22 @@ GLContext GLManager::makeContext(GLContextAttributes attr, GLBufferConfig config
 void GLManager::resetCurrentContext() const
 {
 	display().resetCurrentContext();
+}
+
+GLBufferConfig GLManager::makeBufferConfig(ApplicationContext ctx, const GLBufferRenderConfigAttributes& attrs) const
+{
+	return makeBufferConfig(ctx, std::span{&attrs, 1});
+}
+
+GLBufferConfig GLManager::makeBufferConfig(ApplicationContext ctx, std::span<const GLBufferRenderConfigAttributes> attrsSpan) const
+{
+	for(const auto &attrs : attrsSpan)
+	{
+		auto config = tryBufferConfig(ctx, attrs);
+		if(config)
+			return *config;
+	}
+	throw std::runtime_error("Error finding a GL configuration");
 }
 
 SteadyClockTimePoint FrameParams::presentTime(int frames) const
@@ -148,7 +152,7 @@ WRect Viewport::relRectBestFit(WPt pos, float aspectRatio, _2DOrigin posOrigin, 
 }
 
 #ifndef __ANDROID__
-static void logBacktrace()
+inline void logBacktrace()
 {
 	void *arr[10];
 	auto size = backtrace(arr, 10);

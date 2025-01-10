@@ -15,7 +15,7 @@
 	You should have received a copy of the GNU General Public License
 	along with Imagine.  If not, see <http://www.gnu.org/licenses/> */
 
-#include <imagine/base/timerDefs.hh>
+#include <imagine/base/baseDefs.hh>
 #include <imagine/base/EventLoop.hh>
 #include <imagine/time/Time.hh>
 #include <imagine/util/used.hh>
@@ -30,16 +30,14 @@ class TimerFD
 public:
 	using TimePoint = SteadyClockTimePoint;
 
-	constexpr TimerFD() = default;
-	TimerFD(CallbackDelegate c) : TimerFD{nullptr, c} {}
-	TimerFD(const char *debugLabel, CallbackDelegate c);
+	TimerFD(TimerDesc, CallbackDelegate);
+	const char* debugLabel() const { return fdSrc.debugLabel(); }
 
 protected:
-	IG_UseMemberIf(Config::DEBUG_BUILD, const char *, debugLabel){};
 	std::unique_ptr<CallbackDelegate> callback_;
 	FDEventSource fdSrc;
 
-	bool arm(timespec ms, timespec repeatInterval, int flags, EventLoop loop);
+	bool arm(timespec ms, timespec repeatInterval, int flags);
 };
 
 using TimerImpl = TimerFD;

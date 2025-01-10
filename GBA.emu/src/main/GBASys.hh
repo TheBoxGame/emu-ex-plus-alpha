@@ -1,6 +1,8 @@
 #pragma once
 
-#include <vbam/System.h>
+#include <core/base/system.h>
+#include <core/base/port.h>
+#include <core/gba/gba.h>
 #include <imagine/util/used.hh>
 #include <imagine/util/utility.h>
 
@@ -106,7 +108,7 @@ struct GBAMem
 			uint16_t IME;
 		};
 
-		void resetDmaRegs()
+		constexpr void resetDmaRegs()
 		{
 		  DM0SAD_L = 0x0000;
 		  DM0SAD_H = 0x0000;
@@ -134,7 +136,7 @@ struct GBAMem
 		  DM3CNT_H = 0x0000;
 		}
 
-		void resetLcdRegs(bool useBios, bool skipBios)
+		constexpr void resetLcdRegs(bool useBios, bool skipBios)
 		{
 			DISPCNT  = 0x0080;
 			DISPSTAT = 0x0000;
@@ -178,6 +180,9 @@ struct GBAMem
 			COLEV    = 0x0000;
 			COLY     = 0x0000;
 		}
+
+		constexpr auto& operator[] (this auto&& self, int idx) { return self.b[idx]; }
+		constexpr operator uint8_t*() { return b; }
 	};
 
 	uint8_t bios[0x4000] __attribute__ ((aligned(4)));
@@ -310,6 +315,8 @@ struct GBALCD
 	}
 };
 
+const char *dispModeName(GBALCD::RenderLineFunc);
+
 struct ARM7TDMI;
 
 static inline uint32_t CPUReadByteQuick(ARM7TDMI &cpu, uint32_t addr);
@@ -367,8 +374,8 @@ struct ARM7TDMI
 	int armMode{0x1f};
 	int cpuNextEvent{};
 	int cpuTotalTicks{};
-	IG_UseMemberIf(USE_SWITICKS, int, SWITicks){};
-	IG_UseMemberIf(USE_IRQTICKS, int, IRQTicks){};
+	ConditionalMember<USE_SWITICKS, int> SWITicks{};
+	ConditionalMember<USE_IRQTICKS, int> IRQTicks{};
 #ifdef VBAM_USE_CPU_PREFETCH
 private:
 	uint32_t cpuPrefetch[2]{};
@@ -671,14 +678,9 @@ static inline uint32_t CPUReadHalfWordQuick(ARM7TDMI &cpu, uint32_t addr)
 static inline uint32_t CPUReadMemoryQuick(ARM7TDMI &cpu, uint32_t addr)
 	{ return READ32LE(((uint32_t*)&cpu.map[addr>>24].address[addr & cpu.map[addr>>24].mask])); }
 
-static void blankLine(MixColorType *lineMix, GBALCD &lcd, const GBAMem::IoMem &ioMem)
+inline void blankLine(MixColorType *lineMix, GBALCD &lcd, const GBAMem::IoMem &ioMem)
 {
 	for (int x = 0; x < 240; x++)
 		lineMix[x] = 0x7fff;
-}
-
-static void blankLineUpdateLastVCount(MixColorType *lineMix, GBALCD &lcd, const GBAMem::IoMem &ioMem)
-{
-	blankLine(lineMix, lcd, ioMem);
 	lcd.gfxLastVCOUNT = ioMem.VCOUNT;
 }

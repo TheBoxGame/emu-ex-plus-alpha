@@ -44,7 +44,7 @@ static void initPresentationJNI(JNIEnv* env, jobject presentation)
 		{
 			"onSurfaceCreated", "(JLandroid/view/Surface;)V",
 			(void*)
-			+[](JNIEnv* env, jobject thiz, jlong windowAddr, jobject surface)
+			+[](JNIEnv* env, jobject, jlong windowAddr, jobject surface)
 			{
 				auto nWin = ANativeWindow_fromSurface(env, surface);
 				auto &win = *((Window*)windowAddr);
@@ -54,7 +54,7 @@ static void initPresentationJNI(JNIEnv* env, jobject presentation)
 		{
 			"onSurfaceRedrawNeeded", "(J)V",
 			(void*)
-			+[](JNIEnv* env, jobject thiz, jlong windowAddr)
+			+[](JNIEnv*, jobject, jlong windowAddr)
 			{
 				auto &win = *((Window*)windowAddr);
 				win.systemRequestsRedraw(true);
@@ -63,7 +63,7 @@ static void initPresentationJNI(JNIEnv* env, jobject presentation)
 		{
 			"onSurfaceDestroyed", "(J)V",
 			(void*)
-			+[](JNIEnv* env, jobject thiz, jlong windowAddr)
+			+[](JNIEnv*, jobject, jlong windowAddr)
 			{
 				auto &win = *((Window*)windowAddr);
 				ANativeWindow_release(win.nativeObject());
@@ -73,7 +73,7 @@ static void initPresentationJNI(JNIEnv* env, jobject presentation)
 		{
 			"onWindowDismiss", "(J)V",
 			(void*)
-			+[](JNIEnv* env, jobject thiz, jlong windowAddr)
+			+[](JNIEnv*, jobject, jlong windowAddr)
 			{
 				auto &win = *((Window*)windowAddr);
 				win.dismiss();
@@ -119,7 +119,7 @@ bool Window::setValidOrientations(Orientations o)
 	return true;
 }
 
-bool Window::requestOrientationChange(Rotation o)
+bool Window::requestOrientationChange(Rotation)
 {
 	// no-op, OS manages orientation changes
 	return false;
@@ -127,7 +127,7 @@ bool Window::requestOrientationChange(Rotation o)
 
 PixelFormat ApplicationContext::defaultWindowPixelFormat() const
 {
-	return ((Config::ARM_ARCH && Config::ARM_ARCH < 7) || androidSDK() < 11) ? PIXEL_FMT_RGB565 : PIXEL_FMT_RGBA8888;
+	return ((Config::ARM_ARCH && Config::ARM_ARCH < 7) || androidSDK() < 11) ? PixelFmtRGB565 : PixelFmtRGBA8888;
 }
 
 Window::Window(ApplicationContext ctx, WindowConfig config, InitDelegate onInit_):
@@ -240,12 +240,8 @@ NativeWindow Window::nativeObject() const
 
 void Window::setIntendedFrameRate(FrameRate rate)
 {
-	if(appContext().androidSDK() < 30)
-	{
-		screen()->setFrameRate(rate);
-		return;
-	}
-	if(!nWin) [[unlikely]]
+	screen()->setFrameRate(rate);
+	if(appContext().androidSDK() < 30 || !nWin)
 		return;
 	if(!ANativeWindow_setFrameRate) [[unlikely]]
 	{
@@ -338,7 +334,7 @@ void AndroidWindow::setContentRect(WindowRect rect, WSize winSize)
 	else
 	{
 		contentRect.start(*static_cast<Window*>(this), contentRect.value(), rect, Milliseconds{165},
-			[](auto &win, auto newRect)
+			[](auto &win, [[maybe_unused]] auto newRect)
 			{
 				win.surfaceChangeFlags.contentRectResized = true;
 				win.setNeedsDraw(true);
@@ -347,9 +343,9 @@ void AndroidWindow::setContentRect(WindowRect rect, WSize winSize)
 	win.postDraw();
 }
 
-void Window::setTitle(const char *name) {}
+void Window::setTitle(const char*) {}
 
-void Window::setAcceptDnd(bool on) {}
+void Window::setAcceptDnd(bool) {}
 
 void WindowConfig::setFormat(PixelFormat fmt)
 {

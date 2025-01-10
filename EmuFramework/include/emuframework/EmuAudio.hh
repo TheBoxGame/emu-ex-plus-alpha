@@ -16,8 +16,9 @@
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <imagine/audio/OutputStream.hh>
+#include <imagine/audio/Manager.hh>
 #include <imagine/time/Time.hh>
-#include <imagine/vmem/RingBuffer.hh>
+#include <imagine/util/container/RingBuffer.hh>
 #include <imagine/util/used.hh>
 #include <memory>
 #include <atomic>
@@ -55,7 +56,7 @@ public:
 		MULTI_UNDERRUN
 	};
 
-	EmuAudio(const IG::Audio::Manager &audioManager);
+	EmuAudio(IG::ApplicationContext);
 	void open();
 	void start(FloatSeconds bufferDuration);
 	void stop();
@@ -77,14 +78,14 @@ public:
 	void setEnabledDuringAltSpeed(bool on);
 	bool isEnabledDuringAltSpeed() const;
 	IG::Audio::Format format() const;
-	explicit operator bool() const { return bool(rBuff); }
+	explicit operator bool() const { return bool(rBuff.capacity()); }
 	void writeConfig(FileIO &) const;
-	bool readConfig(MapIO &, unsigned key, size_t size);
+	bool readConfig(MapIO &, unsigned key);
 
+	IG::Audio::Manager manager;
 protected:
 	IG::Audio::OutputStream audioStream;
-	const IG::Audio::Manager &audioManager;
-	RingBuffer rBuff;
+	RingBuffer<uint8_t, RingBufferConf{.mirrored = true}> rBuff;
 	SteadyClockTimePoint lastUnderrunTime{};
 	double speedMultiplier{1.};
 	size_t targetBufferFillBytes{};
@@ -96,7 +97,7 @@ protected:
 	std::atomic<AudioWriteState> audioWriteState{AudioWriteState::BUFFER};
 	int8_t channels{2};
 	AudioFlags flags{defaultAudioFlags};
-	IG_UseMemberIf(IG::Audio::Config::MULTIPLE_SYSTEM_APIS, IG::Audio::Api, audioAPI){};
+	ConditionalMember<IG::Audio::Config::MULTIPLE_SYSTEM_APIS, IG::Audio::Api> audioAPI{};
 	bool addSoundBuffersOnUnderrun{};
 public:
 	bool addSoundBuffersOnUnderrunSetting{};

@@ -47,7 +47,7 @@ bool config_ym2413_enabled = true;
 namespace EmuEx
 {
 
-constexpr SystemLogger log{"App"};
+constexpr SystemLogger log{"MD.emu"};
 const char *EmuSystem::creditsViewStr = CREDITS_INFO_STRING "(c) 2011-2024\nRobert Broglia\nwww.explusalpha.com\n\nPortions (c) the\nGenesis Plus Team\nsegaretro.org/Genesis_Plus";
 bool EmuSystem::hasCheats = true;
 bool EmuSystem::hasPALVideoSystem = true;
@@ -171,7 +171,7 @@ void MdSystem::loadBackupMemory(EmuApp &app)
 	if(sCD.isActive)
 	{
 		auto saveStr = bramSaveFilename(app);
-		auto bramFile = appContext().openFileUri(saveStr, IOAccessHint::All, {.test = true});
+		auto bramFile = appContext().openFileUri(saveStr, {.test = true, .accessHint = IOAccessHint::All});
 		if(!bramFile)
 		{
 			log.info("no BRAM on disk, formatting");
@@ -444,7 +444,7 @@ void MdSystem::loadContent(IO &io, EmuSystemCreateParams, OnLoadProgressDelegate
 	}
 	#endif
 
-	readCheatFile(*this);
+	readCheatFile();
 	applyCheats();
 }
 
@@ -456,7 +456,7 @@ void MdSystem::configAudioRate(FrameTime outputFrameTime, int outputRate)
 	log.info("set sound output rate:{} for fps:{}", outputRate, outputFrameRate);
 	audio_init(outputRate, outputFrameRate);
 	sound_restore();
-	//logMsg("set sound buffer size:%d", snd.buffer_size);
+	//log.debug("set sound buffer size:{}", snd.buffer_size);
 }
 
 bool MdSystem::onVideoRenderFormatChange(EmuVideo &, IG::PixelFormat fmt)

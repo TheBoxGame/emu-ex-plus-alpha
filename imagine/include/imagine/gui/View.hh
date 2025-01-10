@@ -16,7 +16,6 @@
 	along with Imagine.  If not, see <http://www.gnu.org/licenses/> */
 
 #include <imagine/gui/viewDefs.hh>
-#include <imagine/gui/ViewAttachParams.hh>
 #include <imagine/util/DelegateFunc.hh>
 #include <imagine/util/utility.h>
 #include <imagine/util/string/utf16.hh>
@@ -42,9 +41,7 @@ class Window;
 class Screen;
 class ApplicationContext;
 class Application;
-class View;
-class ViewManager;
-class MenuItem;
+struct DocumentPickerEvent;
 
 class ViewController
 {
@@ -61,9 +58,10 @@ public:
 	virtual void dismissView(int idx, bool refreshLayout = true) = 0;
 	virtual bool inputEvent(const Input::Event &e);
 	virtual bool moveFocusToNextView(const Input::Event &e, _2DOrigin direction);
+	virtual View* parentView(View&);
 };
 
-class View
+class View: public ViewI
 {
 public:
 	static constexpr auto imageSamplerConfig = ViewDefs::imageSamplerConfig;
@@ -79,26 +77,15 @@ public:
 		rendererTask_{&attach.rendererTask},
 		manager_{&attach.viewManager} {}
 
-	virtual ~View() = default;
 	View &operator=(View &&) = delete;
-	virtual void place() = 0;
-	virtual void prepareDraw();
-	virtual void draw(Gfx::RendererCommands &__restrict__) = 0;
-	virtual bool inputEvent(const Input::Event &event) = 0;
-	virtual void clearSelection(); // de-select any items from previous input
-	virtual void onShow();
-	virtual void onHide();
-	virtual void onAddedToController(ViewController *c, const Input::Event &e);
-	virtual void setFocus(bool focused);
-	virtual std::u16string_view name() const;
-
+	bool onDocumentPicked(const DocumentPickerEvent&) override;
 	void setViewRect(WindowRect viewRect, WindowRect displayRect);
 	void setViewRect(WindowRect viewRect);
 	void postDraw();
 	Window &window() const;
 	Gfx::Renderer &renderer() const;
 	Gfx::RendererTask &rendererTask() const;
-	ViewManager &manager();
+	auto &manager(this auto&& self) { return *self.manager_; }
 	ViewAttachParams attachParams() const;
 	Screen *screen() const;
 	ApplicationContext appContext() const;
@@ -113,8 +100,10 @@ public:
 	void pushAndShow(std::unique_ptr<View> v, const Input::Event &e, bool needsNavView = true, bool isModal = false);
 	void pushAndShowModal(std::unique_ptr<View> v, const Input::Event &e, bool needsNavView = false);
 	void popTo(View &v);
+	void popTo();
 	void show();
 	bool moveFocusToNextView(const Input::Event &e, _2DOrigin direction);
+	View* parentView();
 	void setWindow(Window *w);
 	void onDismiss();
 	void setController(ViewController *c, const Input::Event &e);

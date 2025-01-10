@@ -47,12 +47,27 @@ public:
 	using OnSelectPathDelegate = DelegateFunc<void (FSPicker &, CStringView filePath, std::string_view displayName, const Input::Event &)>;
 	enum class Mode : uint8_t { FILE, FILE_IN_DIR, DIR };
 
+	struct FileEntry
+	{
+		static constexpr auto isDirFlag = bit(0);
+
+		std::string path;
+		TextMenuItem text;
+
+		FileEntry(ViewAttachParams attach, auto &&path, UTF16Convertible auto &&name):
+			path{IG_forward(path)}, text{IG_forward(name), attach} {}
+		bool isDir() const { return text.flags.user & isDirFlag; }
+		TextMenuItem &menuItem() { return text; }
+	};
+
+	enum class DepthMode { increment, decrement, reset };
+
 	FSPicker(ViewAttachParams attach, Gfx::TextureSpan backRes, Gfx::TextureSpan closeRes,
 			FilterFunc filter = {}, Mode mode = Mode::FILE, Gfx::GlyphTextureSet *face = {});
 	void place() override;
-	bool inputEvent(const Input::Event &) override;
+	bool inputEvent(const Input::Event&, ViewInputEventParams p = {}) override;
 	void prepareDraw() override;
-	void draw(Gfx::RendererCommands &__restrict__) override;
+	void draw(Gfx::RendererCommands &__restrict__, ViewDrawParams p = {}) const override;
 	void onAddedToController(ViewController *, const Input::Event &) override;
 	void setOnChangePath(OnChangePathDelegate);
 	void setOnSelectPath(OnSelectPathDelegate);
@@ -70,22 +85,9 @@ public:
 	void goUpDirectory(const Input::Event &);
 	void pushFileLocationsView(const Input::Event &);
 	void setShowHiddenFiles(bool);
+	bool onDocumentPicked(const DocumentPickerEvent&) override;
 
 protected:
-	struct FileEntry
-	{
-		static constexpr auto isDirFlag = bit(0);
-
-		std::string path;
-		TextMenuItem text;
-
-		FileEntry(ViewAttachParams attach, auto &&path, UTF16Convertible auto &&name):
-			path{IG_forward(path)}, text{IG_forward(name), attach} {}
-		bool isDir() const { return text.flags.user & isDirFlag; }
-	};
-
-	enum class DepthMode { increment, decrement, reset };
-
 	FilterFunc filter{};
 	ViewStack controller;
 	OnChangePathDelegate onChangePath_;
@@ -94,7 +96,7 @@ protected:
 	std::vector<TableUIState> fileUIStates;
 	FS::RootedPath root;
 	Gfx::Text msgText;
-	CustomEvent dirListEvent{"FSPicker::dirListEvent", {}};
+	CustomEvent dirListEvent;
 	TableUIState newFileUIState{};
 	Mode mode_{};
 	bool showHiddenFiles_{};

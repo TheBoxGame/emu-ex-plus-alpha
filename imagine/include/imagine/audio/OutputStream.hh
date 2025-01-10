@@ -34,13 +34,11 @@
 #include <imagine/audio/defs.hh>
 #include <imagine/time/Time.hh>
 #include <imagine/audio/Format.hh>
-#include <imagine/base/Error.hh>
+#include <imagine/util/variant.hh>
 #include <variant>
 
 namespace IG::Audio
 {
-
-class Manager;
 
 struct OutputStreamConfig
 {
@@ -58,7 +56,7 @@ public:
 class NullOutputStream
 {
 public:
-	ErrorCode open(OutputStreamConfig config) { return {}; }
+	StreamError open(OutputStreamConfig) { return {}; }
 	void play() {}
 	void pause() {}
 	void close() {}
@@ -82,15 +80,16 @@ using OutputStreamVariant = std::variant<CAOutputStream, NullOutputStream>;
 	NullOutputStream>;
 #endif
 
-class OutputStream : public OutputStreamVariant
+class OutputStream : public OutputStreamVariant, public AddVisit
 {
 public:
 	using OutputStreamVariant::OutputStreamVariant;
 	using OutputStreamVariant::operator=;
+	using AddVisit::visit;
 
 	constexpr OutputStream(): OutputStreamVariant{std::in_place_type<NullOutputStream>} {}
 	void setApi(const Manager &, Api api = Api::DEFAULT);
-	ErrorCode open(OutputStreamConfig config);
+	StreamError open(OutputStreamConfig config);
 	void play();
 	void pause();
 	void close();

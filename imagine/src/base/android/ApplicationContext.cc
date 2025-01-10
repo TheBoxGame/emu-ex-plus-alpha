@@ -13,11 +13,11 @@
 	You should have received a copy of the GNU General Public License
 	along with Imagine.  If not, see <http://www.gnu.org/licenses/> */
 
-#define LOGTAG "AppCtx"
 #include <imagine/base/ApplicationContext.hh>
 #include <imagine/base/Application.hh>
 #include <imagine/fs/FSUtils.hh>
 #include <imagine/io/FileIO.hh>
+#include <imagine/util/format.hh>
 #include <imagine/logger/logger.h>
 #include "android.hh"
 #include <sys/resource.h>
@@ -25,6 +25,7 @@
 namespace IG
 {
 
+constexpr SystemLogger log{"AppCtx"};
 static NoopThread noopThread;
 
 FS::PathString ApplicationContext::assetPath(const char *) const { return {}; }
@@ -33,7 +34,7 @@ FS::PathString ApplicationContext::supportPath(const char *) const
 {
 	if(androidSDK() < 11) // bug in pre-3.0 Android causes paths in ANativeActivity to be null
 	{
-		//logMsg("ignoring paths from ANativeActivity due to Android 2.3 bug");
+		//log.info("ignoring paths from ANativeActivity due to Android 2.3 bug");
 		auto env = thisThreadJniEnv();
 		auto baseActivity = baseActivityObject();
 		JNI::InstMethod<jstring()> filesDir{env, baseActivity, "filesDir", "()Ljava/lang/String;"};
@@ -101,7 +102,7 @@ std::vector<FS::PathLocation> ApplicationContext::rootFileLocations() const
 	else
 	{
 		std::vector<FS::PathLocation> rootLocation{sharedStoragePathLocation()};
-		logMsg("enumerating storage volumes");
+		log.info("enumerating storage volumes");
 		auto env = thisThreadJniEnv();
 		auto baseActivity = baseActivityObject();
 		JNI::InstMethod<jobject()> jNewStorageManagerHelper{env, baseActivity, "storageManagerHelper", "()Lcom/imagine/StorageManagerHelper;"};
@@ -112,12 +113,12 @@ std::vector<FS::PathLocation> ApplicationContext::rootFileLocations() const
 			{
 				"volumeEnumerated", "(JLjava/lang/String;Ljava/lang/String;)V",
 				(void*)(void (*)(JNIEnv*, jobject, jlong, jstring, jstring))
-				([](JNIEnv* env, jobject thiz, jlong userData, jstring jName, jstring jPath)
+				([](JNIEnv* env, jobject, jlong userData, jstring jName, jstring jPath)
 				{
 					auto rootLocation = (std::vector<FS::PathLocation>*)userData;
 					FS::PathString path{JNI::StringChars(env, jPath)};
 					FS::FileString name{JNI::StringChars(env, jName)};
-					logMsg("volume:%s with path:%s", name.data(), path.data());
+					log.info("volume:{} with path:{}", name, path);
 					rootLocation->emplace_back(path, name);
 				})
 			},
@@ -141,11 +142,11 @@ FS::PathString ApplicationContext::libPath(const char *) const
 	return {};
 }
 
-FileIO ApplicationContext::openFileUri(CStringView uri, IOAccessHint access, OpenFlags openFlags) const
+FileIO ApplicationContext::openFileUri(CStringView uri, OpenFlags openFlags) const
 {
 	if(androidSDK() < 19 || !isUri(uri))
-		return {uri, access, openFlags};
-	return {application().openFileUriFd(thisThreadJniEnv(), baseActivityObject(), uri, openFlags), access, openFlags};
+		return {uri, openFlags};
+	return {application().openFileUriFd(thisThreadJniEnv(), baseActivityObject(), uri, openFlags), openFlags};
 }
 
 UniqueFileDescriptor ApplicationContext::openFileUriFd(CStringView uri, OpenFlags openFlags) const
@@ -181,6 +182,13 @@ FS::FileString ApplicationContext::fileUriDisplayName(CStringView uri) const
 	if(androidSDK() < 19 || !isUri(uri))
 		return FS::displayName(uri);
 	return application().fileUriDisplayName(thisThreadJniEnv(), baseActivityObject(), uri);
+}
+
+FS::file_type ApplicationContext::fileUriType(CStringView uri) const
+{
+	if(androidSDK() < 19 || !isUri(uri))
+		return FS::status(uri).type();
+	return application().fileUriType(thisThreadJniEnv(), baseActivityObject(), uri);
 }
 
 bool ApplicationContext::removeFileUri(CStringView uri) const
@@ -231,7 +239,7 @@ static jstring permissionToJString(JNIEnv *env, Permission p)
 	}
 }
 
-bool ApplicationContext::usesPermission(Permission p) const
+bool ApplicationContext::usesPermission(Permission) const
 {
 	if(androidSDK() < 23 || androidSDK() >= 30)
 		return false;
@@ -322,13 +330,13 @@ bool ApplicationContext::hasTranslucentSysUI() const
 
 bool ApplicationContext::hasDisplayCutout() const { return application().hasDisplayCutout(); }
 
-bool ApplicationContext::hasSustainedPerformanceMode() const { return androidSDK() >= 24; }
+bool ApplicationContext::hasSustainedPerformanceMode() const { return androidSDK() >= 24 && application().hasSustainedPerformanceMode(); }
 
 void ApplicationContext::setSustainedPerformanceMode(bool on)
 {
 	if(!hasSustainedPerformanceMode())
 		return;
-	logMsg("set sustained performance mode:%s", on ? "on" : "off");
+	log.info("set sustained performance mode:{}", on);
 	auto env = mainThreadJniEnv();
 	auto baseActivity = baseActivityObject();
 	JNI::InstMethod<void(jboolean)> jSetSustainedPerformanceMode{env, baseActivity, "setSustainedPerformanceMode", "(Z)V"};
@@ -389,7 +397,7 @@ void ApplicationContext::exitWithMessage(int exitVal, const char *msg)
 	auto baseActivity = baseActivityObject();
 	JNI::InstMethod<void(jstring)> jMakeErrorPopup{env, baseActivity, "makeErrorPopup", "(Ljava/lang/String;)V"};
 	jMakeErrorPopup(env, baseActivity, env->NewStringUTF(msg));
-	auto exitTimer = new Timer{"exitTimer", [=]() { ::exit(exitVal); }};
+	auto exitTimer = new Timer{{.debugLabel = "exitTimer"}, [=]{ ::exit(exitVal); }};
 	exitTimer->runIn(Seconds{3});
 }
 
@@ -410,7 +418,7 @@ void ApplicationContext::addNotification(CStringView onShow, CStringView title, 
 
 void ApplicationContext::addLauncherIcon(CStringView name, CStringView path)
 {
-	logMsg("adding launcher icon:%s, for location:%s", name.data(), path.data());
+	log.info("adding launcher icon:{}, for location:{}", name, path);
 	auto env = mainThreadJniEnv();
 	auto baseActivity = baseActivityObject();
 	JNI::InstMethod<void(jstring, jstring)> jAddViewShortcut{env, baseActivity, "addViewShortcut", "(Ljava/lang/String;Ljava/lang/String;)V"};
@@ -427,21 +435,21 @@ void ApplicationContext::openURL(CStringView url) const
 
 bool ApplicationContext::hasSystemPathPicker() const { return androidSDK() >= 21; }
 
-bool ApplicationContext::showSystemPathPicker(SystemDocumentPickerDelegate del)
+bool ApplicationContext::showSystemPathPicker()
 {
-	return application().openDocumentTreeIntent(mainThreadJniEnv(), baseActivityObject(), del);
+	return application().openDocumentTreeIntent(mainThreadJniEnv(), act, baseActivityObject());
 }
 
 bool ApplicationContext::hasSystemDocumentPicker() const { return androidSDK() >= 19; }
 
-bool ApplicationContext::showSystemDocumentPicker(SystemDocumentPickerDelegate del)
+bool ApplicationContext::showSystemDocumentPicker()
 {
-	return application().openDocumentIntent(mainThreadJniEnv(), baseActivityObject(), del);
+	return application().openDocumentIntent(mainThreadJniEnv(), act, baseActivityObject());
 }
 
-bool ApplicationContext::showSystemCreateDocumentPicker(SystemDocumentPickerDelegate del)
+bool ApplicationContext::showSystemCreateDocumentPicker()
 {
-	return application().createDocumentIntent(mainThreadJniEnv(), baseActivityObject(), del);
+	return application().createDocumentIntent(mainThreadJniEnv(), act, baseActivityObject());
 }
 
 void ApplicationContext::setAcceptIPC(bool on, const char *) { application().acceptsIntents = on; }
@@ -456,15 +464,15 @@ void NoopThread::start()
 		{
 			// keep cpu governor busy by running a low priority thread executing no-op instructions
 			setpriority(PRIO_PROCESS, 0, 19);
-			logMsg("started no-op thread");
+			log.info("started no-op thread");
 			while(isRunning.load(std::memory_order_relaxed))
 			{
-				for(auto i : iotaCount(16))
+				for([[maybe_unused]] auto i : iotaCount(16))
 				{
 					asm("nop");
 				}
 			}
-			logMsg("ended no-op thread");
+			log.info("ended no-op thread");
 		});
 }
 

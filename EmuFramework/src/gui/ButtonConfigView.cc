@@ -15,8 +15,8 @@
 
 #include <emuframework/ButtonConfigView.hh>
 #include <emuframework/AppKeyCode.hh>
-#include <emuframework/InputManagerView.hh>
 #include <emuframework/EmuApp.hh>
+#include "InputManagerView.hh"
 #include "../InputDeviceConfig.hh"
 #include "../InputDeviceData.hh"
 #include <imagine/gfx/RendererCommands.hh>
@@ -48,18 +48,21 @@ ButtonConfigView::ButtonConfigView(ViewAttachParams attach, InputManagerView &ro
 	{
 		cat_.name,
 		attach,
-		[this](const TableView &)
+		[this](ItemMessage msg) -> ItemReply
 		{
-			return resetItemsSize + cat.keys.size();
-		},
-		[this](const TableView &, size_t idx) -> MenuItem&
-		{
-			if(idx == 0)
-				return resetDefaults;
-			else if(idx == 1)
-				return reset;
-			else
-				return btn[idx - resetItemsSize];
+			return msg.visit(overloaded
+			{
+				[&](const ItemsMessage&) -> ItemReply { return resetItemsSize + cat.keys.size(); },
+				[&](const GetItemMessage& m) -> ItemReply
+				{
+					if(m.idx == 0)
+						return &resetDefaults;
+					else if(m.idx == 1)
+						return &reset;
+					else
+						return &btn[m.idx - resetItemsSize];
+				},
+			});
 		}
 	},
 	rootIMView{rootIMView_},
@@ -138,10 +141,10 @@ void ButtonConfigView::onSet(int catIdx, MappedKeys mapKey)
 	devConf.buildKeyMap(app().inputManager);
 	auto &b = btn[catIdx];
 	b.set2ndName(keyNames(mapKey, devConf.device()));
-	b.compile2nd();
+	b.place2nd();
 }
 
-bool ButtonConfigView::inputEvent(const Input::Event &e)
+bool ButtonConfigView::inputEvent(const Input::Event& e, ViewInputEventParams)
 {
 	if(e.keyEvent() && e.keyEvent()->pushed(Input::DefaultKey::LEFT) && selected >= resetItemsSize)
 	{
@@ -168,7 +171,7 @@ void ButtonConfigView::updateKeyNames(const KeyConfig &conf)
 	for(auto &&[i, key]: enumerate(cat.keys))
 	{
 		btn[i].set2ndName(keyNames(conf.get(key), devConf.device()));
-		btn[i].compile2nd();
+		btn[i].place2nd();
 	}
 }
 
@@ -183,7 +186,7 @@ ButtonConfigSetView::ButtonConfigSetView(ViewAttachParams attach,
 		rootIMView{rootIMView},
 		actionStr{actionName} {}
 
-bool ButtonConfigSetView::pointerUIIsInit()
+bool ButtonConfigSetView::pointerUIIsInit() const
 {
 	return unbindB.x != unbindB.x2;
 }
@@ -221,9 +224,9 @@ void ButtonConfigSetView::place()
 	}
 }
 
-bool ButtonConfigSetView::inputEvent(const Input::Event &e)
+bool ButtonConfigSetView::inputEvent(const Input::Event& e, ViewInputEventParams)
 {
-	return visit(overloaded
+	return e.visit(overloaded
 	{
 		[&](const Input::MotionEvent &motionEv)
 		{
@@ -278,11 +281,11 @@ bool ButtonConfigSetView::inputEvent(const Input::Event &e)
 					}
 					return true;
 				}
-				if(contains(pushedKeys, keyEv.key()))
+				if(std::ranges::contains(pushedKeys, keyEv.key()))
 				{
 					return true;
 				}
-				if((contains(pushedKeys, Input::Keycode::GAME_L2) || contains(pushedKeys, Input::Keycode::GAME_R2)) &&
+				if((std::ranges::contains(pushedKeys, Input::Keycode::GAME_L2) || std::ranges::contains(pushedKeys, Input::Keycode::GAME_R2)) &&
 					(keyEv.key() == Input::Keycode::JS_LTRIGGER_AXIS || keyEv.key() == Input::Keycode::JS_RTRIGGER_AXIS))
 				{
 					log.info("ignoring trigger axis to avoid duplicate events since L2/R2 keys are pushed");
@@ -297,7 +300,7 @@ bool ButtonConfigSetView::inputEvent(const Input::Event &e)
 			}
 			return true;
 		}
-	}, e);
+	});
 }
 
 void ButtonConfigSetView::finalize()
@@ -308,7 +311,7 @@ void ButtonConfigSetView::finalize()
 	onSet(mappedKeys);
 }
 
-void ButtonConfigSetView::draw(Gfx::RendererCommands &__restrict__ cmds)
+void ButtonConfigSetView::draw(Gfx::RendererCommands&__restrict__ cmds, ViewDrawParams) const
 {
 	using namespace IG::Gfx;
 	auto &basicEffect = cmds.basicEffect();

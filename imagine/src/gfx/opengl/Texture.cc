@@ -15,7 +15,6 @@
 
 #include <imagine/gfx/Renderer.hh>
 #include <imagine/gfx/Texture.hh>
-#include <imagine/base/Error.hh>
 #include <imagine/util/ScopeGuard.hh>
 #include <imagine/util/utility.h>
 #include <imagine/util/math.hh>
@@ -92,95 +91,95 @@ static int unpackAlignForAddrAndPitch(const void *srcAddr, uint32_t pitch)
 	return std::min(alignmentForPitch, alignmentForAddr);
 }
 
-static GLenum makeGLDataType(IG::PixelFormatID format)
+static GLenum makeGLDataType(PixelFormat format)
 {
 	switch(format)
 	{
-		case PIXEL_RGBA8888:
-		case PIXEL_BGRA8888:
+		case PixelFmtRGBA8888:
+		case PixelFmtBGRA8888:
 			if constexpr(!Config::Gfx::OPENGL_ES)
 			{
 				return GL_UNSIGNED_INT_8_8_8_8_REV;
 			} [[fallthrough]];
-		case PIXEL_RGB888:
-		case PIXEL_I8:
-		case PIXEL_IA88:
-		case PIXEL_A8:
+		case PixelFmtRGB888:
+		case PixelFmtI8:
+		case PixelFmtIA88:
+		case PixelFmtA8:
 			return GL_UNSIGNED_BYTE;
-		case PIXEL_RGB565:
+		case PixelFmtRGB565:
 			return GL_UNSIGNED_SHORT_5_6_5;
-		case PIXEL_RGBA5551:
+		case PixelFmtRGBA5551:
 			return GL_UNSIGNED_SHORT_5_5_5_1;
-		case PIXEL_RGBA4444:
+		case PixelFmtRGBA4444:
 			return GL_UNSIGNED_SHORT_4_4_4_4;
-		default: bug_unreachable("format == %d", format);
+		default: std::unreachable();
 	}
 }
 
-static GLenum makeGLFormat(const Renderer &r, IG::PixelFormatID format)
+static GLenum makeGLFormat(const Renderer &r, PixelFormat format)
 {
 	switch(format)
 	{
-		case PIXEL_I8:
+		case PixelFmtI8:
 			return r.support.luminanceFormat;
-		case PIXEL_IA88:
+		case PixelFmtIA88:
 			return r.support.luminanceAlphaFormat;
-		case PIXEL_A8:
+		case PixelFmtA8:
 			return r.support.alphaFormat;
-		case PIXEL_RGB888:
-		case PIXEL_RGB565:
+		case PixelFmtRGB888:
+		case PixelFmtRGB565:
 			return GL_RGB;
-		case PIXEL_RGBA8888:
-		case PIXEL_RGBA5551:
-		case PIXEL_RGBA4444:
+		case PixelFmtRGBA8888:
+		case PixelFmtRGBA5551:
+		case PixelFmtRGBA4444:
 			return GL_RGBA;
-		case PIXEL_BGRA8888:
+		case PixelFmtBGRA8888:
 			assert(r.support.hasBGRPixels);
 			return GL_BGRA;
-		default: bug_unreachable("format == %d", format);
+		default: std::unreachable();
 	}
 }
 
-static GLenum makeGLESInternalFormat(const Renderer &r, IG::PixelFormatID format)
+static GLenum makeGLESInternalFormat(const Renderer &r, PixelFormat format)
 {
-	if(Config::envIsIOS && format == PIXEL_BGRA8888) // Apple's BGRA extension loosens the internalformat match requirement
+	if(Config::envIsIOS && format == PixelFmtBGRA8888) // Apple's BGRA extension loosens the internalformat match requirement
 		return GL_RGBA;
 	return makeGLFormat(r, format); // OpenGL ES manual states internalformat always equals format
 }
 
-static GLenum makeGLSizedInternalFormat(const Renderer &r, IG::PixelFormatID format, bool isSrgb)
+static GLenum makeGLSizedInternalFormat(const Renderer &r, PixelFormat format, bool isSrgb)
 {
 	switch(format)
 	{
-		case PIXEL_BGRA8888:
-		case PIXEL_RGBA8888:
+		case PixelFmtBGRA8888:
+		case PixelFmtRGBA8888:
 			return isSrgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
-		case PIXEL_RGB565:
+		case PixelFmtRGB565:
 			return Config::Gfx::OPENGL_ES ? GL_RGB565 : GL_RGB5;
-		case PIXEL_RGBA5551:
+		case PixelFmtRGBA5551:
 			return GL_RGB5_A1;
-		case PIXEL_RGBA4444:
+		case PixelFmtRGBA4444:
 			return GL_RGBA4;
-		case PIXEL_I8:
+		case PixelFmtI8:
 			return r.support.luminanceInternalFormat;
-		case PIXEL_IA88:
+		case PixelFmtIA88:
 			return r.support.luminanceAlphaInternalFormat;
-		case PIXEL_A8:
+		case PixelFmtA8:
 			return r.support.alphaInternalFormat;
-		default: bug_unreachable("format == %d", format);
+		default: std::unreachable();
 	}
 }
 
-static int makeGLInternalFormat(const Renderer &r, PixelFormatID format, bool isSrgb)
+static int makeGLInternalFormat(const Renderer &r, PixelFormat format, bool isSrgb)
 {
 	return Config::Gfx::OPENGL_ES ? makeGLESInternalFormat(r, format)
 		: makeGLSizedInternalFormat(r, format, isSrgb);
 }
 
-static TextureType typeForPixelFormat(PixelFormatID format)
+static TextureType typeForPixelFormat(PixelFormat format)
 {
-	return (format == PIXEL_A8) ? TextureType::T2D_1 :
-		(format == PIXEL_IA88) ? TextureType::T2D_2 :
+	return (format == PixelFmtA8) ? TextureType::T2D_1 :
+		(format == PixelFmtIA88) ? TextureType::T2D_2 :
 		TextureType::T2D_4;
 }
 
@@ -191,7 +190,7 @@ static TextureConfig configWithLoadedImagePixmap(PixmapDesc desc, bool makeMipma
 	return config;
 }
 
-static ErrorCode loadImageSource(Texture &texture, Data::PixmapSource img, bool makeMipmaps)
+static bool loadImageSource(Texture &texture, Data::PixmapSource img, bool makeMipmaps)
 {
 	auto imgPix = img.pixmapView();
 	TextureWriteFlags writeFlags{.makeMipmaps = makeMipmaps};
@@ -204,12 +203,12 @@ static ErrorCode loadImageSource(Texture &texture, Data::PixmapSource img, bool 
 	{
 		auto lockBuff = texture.lock(0);
 		if(!lockBuff) [[unlikely]]
-			return {ENOMEM};
+			return false;
 		//log.debug("writing image source into texture pixel buffer");
 		img.write(lockBuff.pixmap());
 		texture.unlock(lockBuff, writeFlags);
 	}
-	return {};
+	return true;
 }
 
 MutablePixmapView LockedTextureBuffer::pixmap() const
@@ -313,7 +312,7 @@ int Texture::levels() const
 	return levels_;
 }
 
-ErrorCode Texture::setFormat(PixmapDesc desc, int levels, ColorSpace colorSpace, TextureSamplerConfig samplerConf)
+bool Texture::setFormat(PixmapDesc desc, int levels, ColorSpace colorSpace, TextureSamplerConfig samplerConf)
 {
 	assumeExpr(desc.w());
 	assumeExpr(desc.h());
@@ -340,14 +339,14 @@ ErrorCode Texture::setFormat(PixmapDesc desc, int levels, ColorSpace colorSpace,
 				auto internalFormat = makeGLSizedInternalFormat(r, desc.format, isSrgb);
 				log.info("texture:0x{:X} storage size:{}x{} levels:{} internal format:{} {}",
 					texName, desc.w(), desc.h(), levels, glImageFormatToString(internalFormat),
-					desc.format == IG::PIXEL_BGRA8888 ? "write format:BGRA" : "");
+					desc.format == IG::PixelFmtBGRA8888 ? "write format:BGRA" : "");
 				runGLChecked(
 					[&]()
 					{
 						r.support.glTexStorage2D(GL_TEXTURE_2D, levels, internalFormat, desc.w(), desc.h());
 					}, "glTexStorage2D()");
 				setSwizzleForFormatInGL(r, desc.format, texName);
-				setSamplerParamsInGL(r, samplerParams);
+				setSamplerParamsInGL(samplerParams);
 			});
 	}
 	else
@@ -370,7 +369,7 @@ ErrorCode Texture::setFormat(PixmapDesc desc, int levels, ColorSpace colorSpace,
 				log.info("texture:0x{:X} storage size:{}x{} levels:{} internal format:{} image format:{}:{} {}",
 					texName, desc.w(), desc.h(), levels, glImageFormatToString(internalFormat),
 					glImageFormatToString(format), glDataTypeToString(dataType),
-					desc.format == IG::PIXEL_BGRA8888 && internalFormat != GL_BGRA ? "write format:BGRA" : "");
+					desc.format == IG::PixelFmtBGRA8888 && internalFormat != GL_BGRA ? "write format:BGRA" : "");
 				int w = desc.w(), h = desc.h();
 				for(auto i : iotaCount(levels))
 				{
@@ -384,7 +383,7 @@ ErrorCode Texture::setFormat(PixmapDesc desc, int levels, ColorSpace colorSpace,
 				}
 				setSwizzleForFormatInGL(r, desc.format, texName);
 				if(remakeTexName)
-					setSamplerParamsInGL(r, samplerParams);
+					setSamplerParamsInGL(samplerParams);
 			}, remakeTexName ? MessageReplyMode::wait : MessageReplyMode::none);
 	}
 	updateFormatInfo(desc, levels);
@@ -563,7 +562,7 @@ WSize Texture::size(int level) const
 {
 	assert(levels_);
 	int w = pixDesc.w(), h = pixDesc.h();
-	for(auto i : iotaCount(level))
+	for([[maybe_unused]] auto i : iotaCount(level))
 	{
 		w = std::max(1, (w / 2));
 		h = std::max(1, (h / 2));
@@ -581,10 +580,10 @@ void Texture::setSampler(TextureSamplerConfig samplerConf)
 	if(!texName()) [[unlikely]]
 		return;
 	task().run(
-		[&r = std::as_const(renderer()), target = target(), texName = texName(), params = asSamplerParams(samplerConf)]()
+		[target = target(), texName = texName(), params = asSamplerParams(samplerConf)]()
 		{
 			glBindTexture(target, texName);
-			setSamplerParamsInGL(r, params, target);
+			setSamplerParamsInGL(params, target);
 		});
 }
 
@@ -641,7 +640,7 @@ static void verifyCurrentTexture2D(TextureRef tex)
 	}
 }
 
-void GLTexture::setSwizzleForFormatInGL(const Renderer &r, PixelFormatID format, GLuint tex)
+void GLTexture::setSwizzleForFormatInGL(const Renderer &r, PixelFormatId format, GLuint tex)
 {
 	if(!r.support.hasTextureSwizzle)
 		return;
@@ -651,8 +650,8 @@ void GLTexture::setSwizzleForFormatInGL(const Renderer &r, PixelFormatID format,
 	const GLint swizzleMaskA8[] {GL_ONE, GL_ONE, GL_ONE, GL_RED};
 	if constexpr((bool)Config::Gfx::OPENGL_ES)
 	{
-		auto &swizzleMask = (format == PIXEL_IA88) ? swizzleMaskIA88
-				: (format == PIXEL_A8) ? swizzleMaskA8
+		auto &swizzleMask = (format == PixelFmtIA88) ? swizzleMaskIA88
+				: (format == PixelFmtA8) ? swizzleMaskA8
 				: swizzleMaskRGBA;
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, swizzleMask[0]);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, swizzleMask[1]);
@@ -661,8 +660,8 @@ void GLTexture::setSwizzleForFormatInGL(const Renderer &r, PixelFormatID format,
 	}
 	else
 	{
-		glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, (format == PIXEL_IA88) ? swizzleMaskIA88
-				: (format == PIXEL_A8) ? swizzleMaskA8
+		glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, (format == PixelFmtIA88) ? swizzleMaskIA88
+				: (format == PixelFmtA8) ? swizzleMaskA8
 				: swizzleMaskRGBA);
 	}
 }
@@ -676,7 +675,7 @@ static void setTexParameteri(GLenum target, GLenum pname, GLint param)
 		}, "glTexParameteri()");
 }
 
-void GLTexture::setSamplerParamsInGL(const Renderer &r, SamplerParams params, GLenum target)
+void GLTexture::setSamplerParamsInGL(SamplerParams params, GLenum target)
 {
 	assert(params.magFilter);
 	setTexParameteri(target, GL_TEXTURE_MAG_FILTER, params.magFilter);
@@ -703,7 +702,7 @@ void GLTexture::initWithEGLImage(EGLImageKHR eglImg, PixmapDesc desc, SamplerPar
 	if(r.support.hasEGLTextureStorage() && !isMutable)
 	{
 		task().runSync(
-			[=, &r = std::as_const(r), &texNameRef = texName_.get(), formatID = (PixelFormatID)desc.format](GLTask::TaskContext ctx)
+			[=, &r = std::as_const(r), &texNameRef = texName_.get(), formatID = desc.format.id](GLTask::TaskContext ctx)
 			{
 				auto texName = makeGLTextureName(texNameRef);
 				texNameRef = texName;
@@ -719,13 +718,13 @@ void GLTexture::initWithEGLImage(EGLImageKHR eglImg, PixmapDesc desc, SamplerPar
 				}
 				ctx.notifySemaphore();
 				setSwizzleForFormatInGL(r, formatID, texName);
-				setSamplerParamsInGL(r, samplerParams);
+				setSamplerParamsInGL(samplerParams);
 			});
 	}
 	else
 	{
 		task().runSync(
-			[=, &r = std::as_const(r), &texNameRef = texName_.get(), formatID = (PixelFormatID)desc.format](GLTask::TaskContext ctx)
+			[=, &r = std::as_const(r), &texNameRef = texName_.get(), formatID = desc.format.id](GLTask::TaskContext ctx)
 			{
 				auto texName = texNameRef;
 				bool madeTexName = false;
@@ -748,7 +747,7 @@ void GLTexture::initWithEGLImage(EGLImageKHR eglImg, PixmapDesc desc, SamplerPar
 				ctx.notifySemaphore();
 				setSwizzleForFormatInGL(r, formatID, texName);
 				if(madeTexName)
-					setSamplerParamsInGL(r, samplerParams);
+					setSamplerParamsInGL(samplerParams);
 			});
 	}
 	updateFormatInfo(desc, 1);
@@ -757,7 +756,7 @@ void GLTexture::initWithEGLImage(EGLImageKHR eglImg, PixmapDesc desc, SamplerPar
 void GLTexture::updateWithEGLImage(EGLImageKHR eglImg)
 {
 	task().GLTask::run(
-		[=, texName = texName()](GLTask::TaskContext ctx)
+		[=, texName = texName()](GLTask::TaskContext)
 		{
 			glBindTexture(GL_TEXTURE_2D, texName);
 			assumeExpr(eglImg);

@@ -13,6 +13,8 @@ CPPFLAGS += -I$(projectPath)/src \
 -I$(projectPath)/src/stella/common/tv_filters \
 -I$(projectPath)/src/stella/gui
 
+CFLAGS_WARN += -Wno-unused-parameter
+
 stellaSrc := AtariVox.cxx \
 Bankswitch.cxx \
 Booster.cxx \
@@ -72,7 +74,6 @@ ControllerDetector.cxx \
 DispatchResult.cxx \
 Driving.cxx \
 EmulationTiming.cxx \
-FSNode.cxx \
 Genesis.cxx \
 Joystick.cxx \
 Keyboard.cxx \

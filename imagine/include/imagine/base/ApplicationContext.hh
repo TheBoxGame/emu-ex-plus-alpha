@@ -164,23 +164,23 @@ public:
 	FS::PathLocation sharedStoragePathLocation() const;
 	std::vector<FS::PathLocation> rootFileLocations() const;
 	FS::RootPathInfo rootPathInfo(std::string_view path) const;
-	AssetIO openAsset(CStringView name, IOAccessHint access, OpenFlags oFlags = {}, const char *appName = applicationName) const;
+	AssetIO openAsset(CStringView name, OpenFlags oFlags = {}, const char *appName = applicationName) const;
 	FS::AssetDirectoryIterator openAssetDirectory(CStringView path, const char *appName = applicationName);
 
 	// path/file access using OS-specific URIs such as those in the Android Storage Access Framework,
 	// backwards compatible with regular file system paths, all thread-safe except for picker functions
 	bool hasSystemPathPicker() const;
-	bool showSystemPathPicker(SystemDocumentPickerDelegate);
+	bool showSystemPathPicker();
 	bool hasSystemDocumentPicker() const;
-	bool showSystemDocumentPicker(SystemDocumentPickerDelegate);
-	bool showSystemCreateDocumentPicker(SystemDocumentPickerDelegate);
-	FileIO openFileUri(CStringView uri, IOAccessHint, OpenFlags oFlags = {}) const;
+	bool showSystemDocumentPicker();
+	bool showSystemCreateDocumentPicker();
 	FileIO openFileUri(CStringView uri, OpenFlags oFlags = {}) const;
 	UniqueFileDescriptor openFileUriFd(CStringView uri, OpenFlags oFlags = {}) const;
 	bool fileUriExists(CStringView uri) const;
 	WallClockTimePoint fileUriLastWriteTime(CStringView uri) const;
 	std::string fileUriFormatLastWriteTimeLocal(CStringView uri) const;
 	FS::FileString fileUriDisplayName(CStringView uri) const;
+	FS::file_type fileUriType(CStringView uri) const;
 	bool removeFileUri(CStringView uri) const;
 	bool renameFileUri(CStringView oldUri, CStringView newUri) const;
 	bool createDirectoryUri(CStringView uri) const;

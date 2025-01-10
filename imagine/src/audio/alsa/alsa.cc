@@ -29,7 +29,7 @@ namespace IG::Audio
 
 constexpr SystemLogger log{"ALSA"};
 
-static const SampleFormat &alsaFormatToPcm(snd_pcm_format_t format)
+constexpr const SampleFormat& alsaFormatToPcm(snd_pcm_format_t format)
 {
 	switch(format)
 	{
@@ -42,7 +42,7 @@ static const SampleFormat &alsaFormatToPcm(snd_pcm_format_t format)
 	}
 }
 
-static snd_pcm_format_t pcmFormatToAlsa(const SampleFormat &format)
+constexpr snd_pcm_format_t pcmFormatToAlsa(const SampleFormat& format)
 {
 	switch(format.bytes())
 	{
@@ -80,7 +80,7 @@ ALSAOutputStream::~ALSAOutputStream()
 	close();
 }
 
-IG::ErrorCode ALSAOutputStream::open(OutputStreamConfig config)
+StreamError ALSAOutputStream::open(OutputStreamConfig config)
 {
 	if(isOpen())
 	{
@@ -96,7 +96,7 @@ IG::ErrorCode ALSAOutputStream::open(OutputStreamConfig config)
 		err < 0)
 	{
 		log.error("Playback open error: {}", snd_strerror(err));
-		return {EINVAL};
+		return StreamError::BadArgument;
 	}
 	auto closePcm = IG::scopeGuard([this](){ snd_pcm_close(pcmHnd); pcmHnd = {}; });
 	log.info("Stream parameters: {}Hz, {}, {} channels", format.rate, snd_pcm_format_name(pcmFormatToAlsa(format.sample)), format.channels);
@@ -123,7 +123,7 @@ IG::ErrorCode ALSAOutputStream::open(OutputStreamConfig config)
 	//log.info("pcm state: {}", alsaPcmStateToString(snd_pcm_state(pcmHnd)));
 	if(err < 0)
 	{
-		return {EINVAL};
+		return StreamError::BadArgument;
 	}
 	closePcm.cancel();
 	quitFlag = false;

@@ -19,6 +19,7 @@
 #include <emuframework/DataPathSelectView.hh>
 #include <emuframework/SystemActionsView.hh>
 #include <emuframework/FilePicker.hh>
+#include <emuframework/viewUtils.hh>
 #include <imagine/gui/AlertView.hh>
 #include <imagine/gui/TextTableView.hh>
 #include <imagine/fs/FS.hh>
@@ -27,6 +28,7 @@
 #include <imagine/util/format.hh>
 #include <imagine/util/string.h>
 #include "MainApp.hh"
+#include <imagine/logger/logger.h>
 
 extern "C"
 {
@@ -36,10 +38,9 @@ extern "C"
 namespace EmuEx
 {
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
-constexpr SystemLogger log{"MsxMenus"};
+constexpr SystemLogger log{"MSX.emu"};
 
 static std::vector<FS::FileString> readMachinesNames(IG::ApplicationContext ctx, std::string_view firmwarePath)
 {
@@ -108,9 +109,9 @@ static std::vector<FS::FileString> readMachinesNames(IG::ApplicationContext ctx,
 	return machineNames;
 }
 
-class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<CustomSystemOptionView>
+class CustomSystemOptionView : public SystemOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemOptionView>::system;
+	using MainAppHelper::system;
 
 	std::vector<FS::FileString> machineNames{};
 	std::vector<TextMenuItem> machineItems{};
@@ -122,7 +123,7 @@ class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<Cus
 	{
 		return
 		{
-			.onSetDisplayString = [](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [](auto idx, Gfx::Text& t)
 			{
 				if(idx == -1)
 				{
@@ -182,10 +183,10 @@ class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<Cus
 	BoolMenuItem skipFdcAccess
 	{
 		"Fast-forward Disk IO", attachParams(),
-		(bool)optionSkipFdcAccess,
+		system().optionSkipFdcAccess,
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
-			optionSkipFdcAccess = item.flipBoolValue(*this);
+			system().optionSkipFdcAccess = item.flipBoolValue(*this);
 		}
 	};
 
@@ -200,10 +201,10 @@ public:
 	}
 };
 
-class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper<CustomFilePathOptionView>
+class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomFilePathOptionView>::app;
-	using MainAppHelper<CustomFilePathOptionView>::system;
+	using MainAppHelper::app;
+	using MainAppHelper::system;
 	friend class FilePathOptionView;
 
 	std::string machinePathMenuEntryStr(IG::CStringView path) const
@@ -269,7 +270,7 @@ public:
 
 static const char *insertEjectDiskMenuStr[] {"Insert File", "Eject"};
 
-class MsxIOControlView : public TableView, public MainAppHelper<MsxIOControlView>
+class MsxIOControlView : public TableView, public MainAppHelper
 {
 public:
 	static const char *hdSlotPrefix[4];
@@ -293,7 +294,7 @@ public:
 	{
 		hdName[slot] = name;
 		updateHDText(slot);
-		hdSlot[slot].compile();
+		hdSlot[slot].place();
 	}
 
 	void addHDFilePickerView(Input::Event e, uint8_t slot, bool dismissPreviousView)
@@ -361,7 +362,7 @@ public:
 	{
 		system().cartName[slot] = name;
 		updateROMText(slot);
-		romSlot[slot].compile();
+		romSlot[slot].place();
 		updateHDStatusFromCartSlot(slot);
 	}
 
@@ -443,7 +444,7 @@ public:
 	{
 		system().diskName[slot] = name;
 		updateDiskText(slot);
-		diskSlot[slot].compile();
+		diskSlot[slot].place();
 	}
 
 	void addDiskFilePickerView(Input::Event e, uint8_t slot, bool dismissPreviousView)
@@ -504,14 +505,7 @@ public:
 		{
 			"IO Control",
 			attach,
-			[this](const TableView &) -> int
-			{
-				return item.size();
-			},
-			[this](const TableView &, int idx) -> MenuItem&
-			{
-				return *item[idx];
-			}
+			item
 		}
 	{
 		for(auto slot : iotaCount(2))
@@ -539,10 +533,10 @@ const char *MsxIOControlView::romSlotPrefix[2] {"ROM1:", "ROM2:"};
 const char *MsxIOControlView::diskSlotPrefix[2] {"Disk1:", "Disk2:"};
 const char *MsxIOControlView::hdSlotPrefix[4] {"IDE1-M:", "IDE1-S:", "IDE2-M:", "IDE2-S:"};
 
-class CustomSystemActionsView : public SystemActionsView, public MainAppHelper<CustomSystemActionsView>
+class CustomSystemActionsView : public SystemActionsView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemActionsView>::system;
-	using MainAppHelper<CustomSystemActionsView>::app;
+	using MainAppHelper::system;
+	using MainAppHelper::app;
 
 private:
 	TextMenuItem msxIOControl
@@ -570,7 +564,7 @@ private:
 		0,
 		machineItems,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [](auto idx, Gfx::Text& t)
 			{
 				if(idx == -1)
 				{
@@ -660,7 +654,7 @@ static const MixerAudioType channelType[]
 	MIXER_CHANNEL_PCM,
 };
 
-class SoundMixerView : public TableView, public MainAppHelper<SoundMixerView>
+class SoundMixerView : public TableView, public MainAppHelper
 {
 public:
 	SoundMixerView(ViewAttachParams attach):
@@ -691,10 +685,10 @@ protected:
 		return
 		{
 			"Output", attachParams(),
-			(bool)mixerEnableOption(type),
+			system().mixerEnableOption(type),
 			[this, type](BoolMenuItem &item, View &, Input::Event)
 			{
-				setMixerEnableOption(type, item.flipBoolValue(*this));
+				system().setMixerEnableOption(type, item.flipBoolValue(*this));
 			}
 		};
 	}
@@ -719,24 +713,24 @@ protected:
 			TextMenuItem{"Default Value", attachParams(),
 				[this, type]()
 				{
-					setMixerVolumeOption(type, -1);
+					system().setMixerVolumeOption(type, -1);
 				}},
 			TextMenuItem{"Custom Value", attachParams(),
 				[this, type = (uint8_t)type, idx](Input::Event e)
 				{
-					app().pushAndShowNewCollectValueInputView<int>(attachParams(), e, "Input 0 to 100", "",
-						[this, type, idx](EmuApp &app, auto val)
+					pushAndShowNewCollectValueInputView<int>(attachParams(), e, "Input 0 to 100", "",
+						[this, type, idx](CollectTextInputView&, auto val)
 						{
 							if(val >= 0 && val <= 100)
 							{
-								setMixerVolumeOption((MixerAudioType)type, val);
+								system().setMixerVolumeOption((MixerAudioType)type, val);
 								volumeLevel[idx].setSelected(std::size(volumeLevelItem[idx]) - 1, *this);
 								dismissPrevious();
 								return true;
 							}
 							else
 							{
-								app.postErrorMessage("Value not in range");
+								app().postErrorMessage("Value not in range");
 								return false;
 							}
 						});
@@ -767,7 +761,7 @@ protected:
 			{
 				.onSetDisplayString = [this, type](auto idx, Gfx::Text &t)
 				{
-					t.resetString(std::format("{}%", mixerVolumeOption(type)));
+					t.resetString(std::format("{}%", system().mixerVolumeOption(type)));
 					return true;
 				}
 			},
@@ -792,24 +786,24 @@ protected:
 			TextMenuItem{"Default Value", attachParams(),
 				[this, type]()
 				{
-					setMixerPanOption(type, -1);
+					system().setMixerPanOption(type, -1);
 				}},
 			TextMenuItem{"Custom Value", attachParams(),
 				[this, type = (uint8_t)type, idx](Input::Event e)
 				{
-					app().pushAndShowNewCollectValueInputView<int>(attachParams(), e, "Input 0 to 100", "",
-						[this, type, idx](EmuApp &app, auto val)
+					pushAndShowNewCollectValueInputView<int>(attachParams(), e, "Input 0 to 100", "",
+						[this, type, idx](CollectTextInputView&, auto val)
 						{
 							if(val >= 0 && val <= 100)
 							{
-								setMixerPanOption((MixerAudioType)type, val);
+								system().setMixerPanOption((MixerAudioType)type, val);
 								panLevel[idx].setSelected(std::size(panLevelItem[idx]) - 1, *this);
 								dismissPrevious();
 								return true;
 							}
 							else
 							{
-								app.postErrorMessage("Value not in range");
+								app().postErrorMessage("Value not in range");
 								return false;
 							}
 						});
@@ -840,7 +834,7 @@ protected:
 			{
 				.onSetDisplayString = [this, type](auto idx, Gfx::Text &t)
 				{
-					t.resetString(std::format("{}%", mixerPanOption(type)));
+					t.resetString(std::format("{}%", system().mixerPanOption(type)));
 					return true;
 				}
 			},
@@ -894,7 +888,7 @@ protected:
 class CustomAudioOptionView : public AudioOptionView
 {
 public:
-	CustomAudioOptionView(ViewAttachParams attach): AudioOptionView{attach, true}
+	CustomAudioOptionView(ViewAttachParams attach, EmuAudio& audio): AudioOptionView{attach, audio, true}
 	{
 		loadStockItems();
 		item.emplace_back(&mixer);
@@ -917,7 +911,7 @@ std::unique_ptr<View> EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 	{
 		case ViewID::SYSTEM_ACTIONS: return std::make_unique<CustomSystemActionsView>(attach);
 		case ViewID::SYSTEM_OPTIONS: return std::make_unique<CustomSystemOptionView>(attach);
-		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach);
+		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach, audio);
 		case ViewID::FILE_PATH_OPTIONS: return std::make_unique<CustomFilePathOptionView>(attach);
 		default: return nullptr;
 	}

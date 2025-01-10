@@ -19,35 +19,34 @@
 #include <emuframework/FilePathOptionView.hh>
 #include <emuframework/UserPathSelectView.hh>
 #include <emuframework/SystemActionsView.hh>
-#include "EmuCheatViews.hh"
 #include "Palette.hh"
 #include "MainApp.hh"
 #include <resample/resamplerinfo.h>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
 static constexpr size_t MAX_RESAMPLERS = 4;
 
-class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<CustomAudioOptionView>
+class CustomAudioOptionView : public AudioOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomAudioOptionView>::app;
-	using MainAppHelper<CustomAudioOptionView>::system;
+	using MainAppHelper::app;
+	using MainAppHelper::system;
 
 	StaticArrayList<TextMenuItem, MAX_RESAMPLERS> resamplerItem;
 
 	MultiChoiceMenuItem resampler
 	{
 		"Resampler", attachParams(),
-		system().optionAudioResampler.val,
+		system().optionAudioResampler.value(),
 		resamplerItem
 	};
 
 public:
-	CustomAudioOptionView(ViewAttachParams attach): AudioOptionView{attach, true}
+	CustomAudioOptionView(ViewAttachParams attach, EmuAudio& audio): AudioOptionView{attach, audio, true}
 	{
 		loadStockItems();
 		logMsg("%d resamplers", (int)ResamplerInfo::num());
@@ -67,9 +66,9 @@ public:
 	}
 };
 
-class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<CustomVideoOptionView>
+class CustomVideoOptionView : public VideoOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomVideoOptionView>::system;
+	using MainAppHelper::system;
 
 	TextMenuItem::SelectDelegate setGbPaletteDel()
 	{
@@ -100,7 +99,7 @@ class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<Custo
 	MultiChoiceMenuItem gbPalette
 	{
 		"GB Palette", attachParams(),
-		system().optionGBPal.val,
+		MenuId{system().optionGBPal},
 		gbPaletteItem
 	};
 
@@ -108,7 +107,7 @@ class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<Custo
 	{
 		"Saturated GBC Colors", attachParams(),
 		(bool)system().optionFullGbcSaturation,
-		[this](BoolMenuItem &item, View &, Input::Event e)
+		[this](BoolMenuItem &item)
 		{
 			system().optionFullGbcSaturation = item.flipBoolValue(*this);
 			if(system().hasContent())
@@ -119,7 +118,7 @@ class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<Custo
 	};
 
 public:
-	CustomVideoOptionView(ViewAttachParams attach): VideoOptionView{attach, true}
+	CustomVideoOptionView(ViewAttachParams attach, EmuVideoLayer &layer): VideoOptionView{attach, layer, true}
 	{
 		loadStockItems();
 		item.emplace_back(&systemSpecificHeading);
@@ -128,13 +127,13 @@ public:
 	}
 };
 
-class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionView>
+class ConsoleOptionView : public TableView, public MainAppHelper
 {
 	BoolMenuItem useBuiltinGBPalette
 	{
 		"Use Built-in GB Palettes", attachParams(),
 		(bool)system().optionUseBuiltinGBPalette,
-		[this](BoolMenuItem &item, View &, Input::Event e)
+		[this](BoolMenuItem &item)
 		{
 			system().sessionOptionSet();
 			system().optionUseBuiltinGBPalette = item.flipBoolValue(*this);
@@ -145,7 +144,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	BoolMenuItem reportAsGba
 	{
 		"Report Hardware as GBA", attachParams(),
-		(bool)system().optionReportAsGba,
+		system().optionReportAsGba,
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
 			system().sessionOptionSet();
@@ -193,9 +192,9 @@ public:
 	}
 };
 
-class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper<CustomFilePathOptionView>
+class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomFilePathOptionView>::system;
+	using MainAppHelper::system;
 
 	TextMenuItem cheatsPath
 	{
@@ -224,12 +223,10 @@ std::unique_ptr<View> EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 {
 	switch(id)
 	{
-		case ViewID::VIDEO_OPTIONS: return std::make_unique<CustomVideoOptionView>(attach);
-		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach);
+		case ViewID::VIDEO_OPTIONS: return std::make_unique<CustomVideoOptionView>(attach, videoLayer);
+		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach, audio);
 		case ViewID::SYSTEM_ACTIONS: return std::make_unique<CustomSystemActionsView>(attach);
 		case ViewID::FILE_PATH_OPTIONS: return std::make_unique<CustomFilePathOptionView>(attach);
-		case ViewID::EDIT_CHEATS: return std::make_unique<EmuEditCheatListView>(attach);
-		case ViewID::LIST_CHEATS: return std::make_unique<EmuCheatsView>(attach);
 		default: return nullptr;
 	}
 }

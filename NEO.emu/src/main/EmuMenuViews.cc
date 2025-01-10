@@ -39,10 +39,9 @@ extern "C"
 namespace EmuEx
 {
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
-class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionView>
+class ConsoleOptionView : public TableView, public MainAppHelper
 {
 	TextMenuItem timerItem[3]
 	{
@@ -67,7 +66,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 		std::min((int)system().optionTimerInt, 2),
 		timerItem,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [](auto idx, Gfx::Text& t)
 			{
 				if(idx == 2)
 				{
@@ -96,9 +95,9 @@ public:
 	{}
 };
 
-class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<CustomSystemOptionView>
+class CustomSystemOptionView : public SystemOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemOptionView>::system;
+	using MainAppHelper::system;
 
 	TextMenuItem::SelectDelegate setRegionDel()
 	{
@@ -182,9 +181,9 @@ public:
 	}
 };
 
-class EmuGUIOptionView : public GUIOptionView, public MainAppHelper<EmuGUIOptionView>
+class EmuGUIOptionView : public GUIOptionView, public MainAppHelper
 {
-	using MainAppHelper<EmuGUIOptionView>::system;
+	using MainAppHelper::system;
 
 	BoolMenuItem listAll
 	{
@@ -287,14 +286,14 @@ constexpr RomListEntry romlist[]
 	{ "kf2k5uni", 1 },
 	{ "kizuna", 0 },
 	{ "kof10th", 1 },
-	{ "kof2000", 1 },
-	{ "kof2000n", 1 },
-	{ "kof2001", 1 },
-	{ "kof2001h", 1 },
-	{ "kof2002", 1 },
+	{ "kof2000", 0 },
+	{ "kof2000n", 0 },
+	{ "kof2001", 0 },
+	{ "kof2001h", 0 },
+	{ "kof2002", 0 },
 	{ "kof2002b", 1 },
-	{ "kof2003", 1 },
-	{ "kof2003h", 1 },
+	{ "kof2003", 0 },
+	{ "kof2003h", 0 },
 	{ "kof2k4se", 1 },
 	{ "kof94", 0 },
 	{ "kof95", 0 },
@@ -335,7 +334,7 @@ constexpr RomListEntry romlist[]
 	{ "miexchng", 0 },
 	{ "minasan", 0 },
 	{ "mosyougi", 0 },
-	{ "ms4plus", 1 },
+	{ "ms4plus", 0 },
 	{ "ms5pcb", 1 },
 	{ "ms5plus", 1 },
 	{ "mslug", 0 },
@@ -344,8 +343,8 @@ constexpr RomListEntry romlist[]
 	{ "mslug3b6", 0 },
 	{ "mslug3h", 0 },
 	{ "mslug4", 0 },
-	{ "mslug5", 1 },
-	{ "mslug5h", 1 },
+	{ "mslug5", 0 },
+	{ "mslug5h", 0 },
 	{ "mslugx", 0 },
 	{ "mutnat", 0 },
 	{ "nam1975", 0 },
@@ -365,9 +364,9 @@ constexpr RomListEntry romlist[]
 	{ "pbobblen", 0 },
 	{ "pbobblena", 0 },
 	{ "pgoal", 0 },
-	{ "pnyaa", 1 },
+	{ "pnyaa", 0 },
 	{ "popbounc", 0 },
-	{ "preisle2", 1 },
+	{ "preisle2", 0 },
 	{ "pspikes2", 0 },
 	{ "pulstar", 0 },
 	{ "puzzldpr", 0 },
@@ -386,7 +385,7 @@ constexpr RomListEntry romlist[]
 	{ "ridheroh", 1 },
 	{ "roboarmy", 0 },
 	{ "rotd", 1 },
-	{ "s1945p", 1 },
+	{ "s1945p", 0 },
 	{ "samsh5sp", 0 },
 	{ "samsh5sph", 0 },
 	{ "samsh5spn", 0 },
@@ -395,16 +394,16 @@ constexpr RomListEntry romlist[]
 	{ "samsho3", 0 },
 	{ "samsho3h", 0 },
 	{ "samsho4", 0 },
-	{ "samsho5", 1 },
+	{ "samsho5", 0 },
 	{ "samsho5b", 1 },
-	{ "samsho5h", 1 },
+	{ "samsho5h", 0 },
 	{ "samshoh", 0 },
 	{ "savagere", 0 },
 	{ "sdodgeb", 0 },
 	{ "sengokh", 0 },
 	{ "sengoku", 0 },
 	{ "sengoku2", 0 },
-	{ "sengoku3", 1 },
+	{ "sengoku3", 0 },
 	{ "shocktr2", 0 },
 	{ "shocktra", 0 },
 	{ "shocktro", 0 },
@@ -421,7 +420,7 @@ constexpr RomListEntry romlist[]
 	{ "stakwin2", 0 },
 	{ "strhoop", 0 },
 	{ "superspy", 0 },
-	{ "svc", 1 },
+	{ "svc", 0 },
 	{ "svcboot", 1 },
 	{ "svcpcb", 1 },
 	{ "svcpcba", 1 },
@@ -455,7 +454,7 @@ constexpr RomListEntry romlist[]
 
 static FS::PathString gameFilePath(EmuApp &app, std::string_view name)
 {
-	auto basePath = app.contentSearchPath(name);
+	auto basePath = app.inContentSearchPath(name);
 	auto ctx = app.appContext();
 	if(auto zipPath = basePath + ".zip";
 		ctx.fileUriExists(zipPath))
@@ -477,7 +476,7 @@ constexpr static bool gameFileExists(std::string_view name, std::string_view nam
 		FS::FileString{name}.append(".rar"));
 }
 
-class GameListView : public TableView, public MainAppHelper<GameListView>
+class GameListView : public TableView, public MainAppHelper
 {
 private:
 	std::vector<TextMenuItem> item{};
@@ -507,7 +506,7 @@ public:
 		fileList.reserve(4095); // avoid initial small re-allocations
 		try
 		{
-			ctx.forEachInDirectoryUri(app().contentSearchPath(),
+			ctx.forEachInDirectoryUri(app().contentSearchPath,
 				[&](auto &entry)
 				{
 					if(entry.type() == FS::file_type::directory)
@@ -598,24 +597,15 @@ class UnibiosSwitchesView : public TableView
 		memory.memcard[3] = val;
 	}
 
+	std::array<MenuItem*, 2> items{&region, &system};
+
 public:
 	UnibiosSwitchesView(ViewAttachParams attach):
 		TableView
 		{
 			"Unibios Switches",
 			attach,
-			[this](const TableView &)
-			{
-				return 2;
-			},
-			[this](const TableView &, unsigned idx) -> MenuItem&
-			{
-				switch(idx)
-				{
-					case 0: return region;
-					default: return system;
-				}
-			}
+			items
 		}
 	{}
 

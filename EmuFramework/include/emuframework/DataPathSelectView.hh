@@ -41,11 +41,9 @@ template<class T>
 concept FileChangeCallable = Callable<T, bool, CStringView, FS::file_type>;
 
 template<DataPathSelectMode mode, ArchivePathSelectMode archiveMode = ArchivePathSelectMode::include>
-class DataPathSelectView : public TableView, public EmuAppHelper<DataPathSelectView<mode, archiveMode>>
+class DataPathSelectView : public TableView, public EmuAppHelper
 {
 public:
-	using EmuAppHelper<DataPathSelectView<mode, archiveMode>>::app;
-
 	enum class Mode: uint8_t
 	{
 		File, Folder
@@ -63,10 +61,11 @@ public:
 				auto &thisView = asThis(view);
 				fPicker->setPath(thisView.searchDir, e);
 				fPicker->setOnSelectPath(
-					[=](FSPicker &picker, CStringView path, std::string_view displayName, const Input::Event &e)
+					[=](FSPicker &picker, CStringView path, [[maybe_unused]] std::string_view displayName, const Input::Event&)
 					{
 						if(!onFileChange(path, FS::file_type::directory))
 							return;
+						picker.popTo();
 						picker.dismissPrevious();
 						picker.dismiss();
 					});
@@ -83,7 +82,7 @@ public:
 					archiveMode == ArchivePathSelectMode::include);
 				fPicker->setPath(thisView.searchDir, e);
 				fPicker->setOnSelectPath(
-					[=](FSPicker &picker, CStringView path, std::string_view displayName, const Input::Event &e)
+					[=](FSPicker &picker, CStringView path, std::string_view displayName, const Input::Event&)
 					{
 						if(mode == DataPathSelectMode::Folder && !EmuApp::hasArchiveExtension(displayName))
 						{
@@ -92,7 +91,7 @@ public:
 						}
 						if(!onFileChange(path, FS::file_type::regular))
 							return;
-						picker.popTo(picker);
+						picker.popTo();
 						picker.dismissPrevious();
 						picker.dismiss();
 					});
@@ -122,10 +121,10 @@ public:
 	void appendItem(TextMenuItem &i) { item.emplace_back(&i); }
 
 protected:
-	IG_UseMemberIf(mode == DataPathSelectMode::Folder, TextMenuItem, selectFolder);
+	ConditionalMember<mode == DataPathSelectMode::Folder, TextMenuItem> selectFolder;
 	TextMenuItem selectFile;
 	TextMenuItem unset;
-	IG_UseMemberIf(mode == DataPathSelectMode::File, EmuSystem::NameFilterFunc, fsFilter);
+	ConditionalMember<mode == DataPathSelectMode::File, EmuSystem::NameFilterFunc> fsFilter;
 	StaticArrayList<MenuItem*, 4> item;
 	FS::PathString searchDir;
 

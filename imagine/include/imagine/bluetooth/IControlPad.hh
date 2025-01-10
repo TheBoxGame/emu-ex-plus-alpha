@@ -15,14 +15,12 @@
 	You should have received a copy of the GNU General Public License
 	along with Imagine.  If not, see <http://www.gnu.org/licenses/> */
 
-#include <imagine/bluetooth/sys.hh>
-#include <imagine/input/inputDefs.hh>
+#include <imagine/bluetooth/BluetoothInputDevice.hh>
+#include <imagine/bluetooth/BluetoothAdapter.hh>
 #include <imagine/input/Axis.hh>
 
 namespace IG
 {
-
-class ErrorCode;
 
 struct IControlPad : public BluetoothInputDevice
 {
@@ -30,9 +28,9 @@ public:
 	static constexpr std::array<uint8_t, 3> btClass{0x00, 0x1F, 0x00};
 
 	IControlPad(ApplicationContext, BluetoothAddr);
-	ErrorCode open(BluetoothAdapter &, Input::Device &) final;
+	bool open(BluetoothAdapter &, Input::Device &) final;
 	void close();
-	uint32_t statusHandler(Input::Device &, BluetoothSocket &, uint32_t status);
+	uint32_t statusHandler(Input::Device &, BluetoothSocket &, BluetoothSocketState status);
 	bool dataHandler(Input::Device &, const char *packet, size_t size);
 	const char *keyName(Input::Key k) const;
 	std::span<Input::Axis> motionAxes() { return axis; }
@@ -46,17 +44,17 @@ private:
 		FUNC_GP_REPORTS,
 	};
 	static constexpr float axisScaler = 1./127.;
-	BluetoothSocketSys sock;
+	BluetoothSocket sock;
 	char inputBuffer[6]{};
 	uint32_t inputBufferPos = 0;
 	int function = 0;
 	char prevBtnData[2]{};
 	Input::Axis axis[4]
 	{
-		{Input::Map::ICONTROLPAD, Input::AxisId::X, axisScaler}, // Left X Axis
-		{Input::Map::ICONTROLPAD, Input::AxisId::Y, axisScaler}, // Left Y Axis
-		{Input::Map::ICONTROLPAD, Input::AxisId::Z, axisScaler}, // Right X Axis
-		{Input::Map::ICONTROLPAD, Input::AxisId::RZ, axisScaler} // Right Y Axis
+		{Input::AxisId::X, axisScaler}, // Left X Axis
+		{Input::AxisId::Y, axisScaler}, // Left Y Axis
+		{Input::AxisId::Z, axisScaler}, // Right X Axis
+		{Input::AxisId::RZ, axisScaler} // Right Y Axis
 	};
 	BluetoothAddr addr;
 

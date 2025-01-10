@@ -4,6 +4,7 @@
 #include <emuframework/DataPathSelectView.hh>
 #include <emuframework/UserPathSelectView.hh>
 #include <emuframework/SystemActionsView.hh>
+#include <emuframework/viewUtils.hh>
 #include "EmuCheatViews.hh"
 #include "MainApp.hh"
 #include <imagine/util/format.hh>
@@ -12,19 +13,19 @@
 #include <apu/bapu/snes/snes.hpp>
 #include <ppu.h>
 #endif
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
 constexpr bool HAS_NSRT = !IS_SNES9X_VERSION_1_4;
 
 #ifndef SNES9X_VERSION_1_4
-class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<CustomAudioOptionView>
+class CustomAudioOptionView : public AudioOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomAudioOptionView>::system;
+	using MainAppHelper::system;
 
 	void setDSPInterpolation(uint8_t val)
 	{
@@ -45,12 +46,12 @@ class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<Custo
 	MultiChoiceMenuItem dspInterpolation
 	{
 		"DSP Interpolation", attachParams(),
-		system().optionAudioDSPInterpolation.val,
+		system().optionAudioDSPInterpolation.value(),
 		dspInterpolationItem
 	};
 
 public:
-	CustomAudioOptionView(ViewAttachParams attach): AudioOptionView{attach, true}
+	CustomAudioOptionView(ViewAttachParams attach, EmuAudio &audio): AudioOptionView{attach, audio, true}
 	{
 		loadStockItems();
 		item.emplace_back(&dspInterpolation);
@@ -58,13 +59,13 @@ public:
 };
 #endif
 
-class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionView>
+class ConsoleOptionView : public TableView, public MainAppHelper
 {
 	BoolMenuItem multitap
 	{
 		"5-Player Adapter", attachParams(),
 		(bool)system().optionMultitap,
-		[this](BoolMenuItem &item, View &, Input::Event e)
+		[this](BoolMenuItem &item)
 		{
 			system().sessionOptionSet();
 			system().optionMultitap = item.flipBoolValue(*this);
@@ -112,7 +113,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	MultiChoiceMenuItem videoSystem
 	{
 		"System", attachParams(),
-		system().optionVideoSystem.val,
+		system().optionVideoSystem.value(),
 		videoSystemItem
 	};
 
@@ -129,7 +130,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	{
 		"Allow Extended 239/478 Lines", attachParams(),
 		(bool)system().optionAllowExtendedVideoLines,
-		[this](BoolMenuItem &item, View &, Input::Event e)
+		[this](BoolMenuItem &item)
 		{
 			system().sessionOptionSet();
 			system().optionAllowExtendedVideoLines = item.flipBoolValue(*this);
@@ -163,7 +164,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	{
 		"Allow Invalid VRAM Access", attachParams(),
 		(bool)!system().optionBlockInvalidVRAMAccess,
-		[this](BoolMenuItem &item, View &, Input::Event e)
+		[this](BoolMenuItem &item)
 		{
 			system().sessionOptionSet();
 			system().optionBlockInvalidVRAMAccess = !item.flipBoolValue(*this);
@@ -175,7 +176,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	{
 		"Separate Echo Buffer From Ram", attachParams(),
 		(bool)system().optionSeparateEchoBuffer,
-		[this](BoolMenuItem &item, View &, Input::Event e)
+		[this](BoolMenuItem &item)
 		{
 			system().sessionOptionSet();
 			system().optionSeparateEchoBuffer = item.flipBoolValue(*this);
@@ -196,10 +197,10 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 		{"Custom Value", attachParams(),
 			[this](Input::Event e)
 			{
-				app().pushAndShowNewCollectValueInputView<int>(attachParams(), e, "Input 5 to 250", "",
-					[this](EmuApp &app, auto val)
+				pushAndShowNewCollectValueInputView<int>(attachParams(), e, "Input 5 to 250", "",
+					[this](CollectTextInputView&, auto val)
 					{
-						if(system().optionSuperFXClockMultiplier.isValidVal(val))
+						if(system().optionSuperFXClockMultiplier.isValid(val))
 						{
 							setSuperFXClock(val);
 							superFXClock.setSelected(lastIndex(superFXClockItem), *this);
@@ -208,7 +209,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 						}
 						else
 						{
-							app.postErrorMessage("Value not in range");
+							app().postErrorMessage("Value not in range");
 							return false;
 						}
 					});
@@ -222,16 +223,16 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 		"SuperFX Clock Multiplier", attachParams(),
 		[this]()
 		{
-			if(system().optionSuperFXClockMultiplier.val == 100)
+			if(system().optionSuperFXClockMultiplier == 100)
 				return 0;
 			else
 				return 1;
 		}(),
 		superFXClockItem,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [this](auto, Gfx::Text& t)
 			{
-				t.resetString(std::format("{}%", system().optionSuperFXClockMultiplier.val));
+				t.resetString(std::format("{}%", system().optionSuperFXClockMultiplier.value()));
 				return true;
 			}
 		},
@@ -288,10 +289,10 @@ public:
 	}
 };
 
-class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper<CustomFilePathOptionView>
+class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomFilePathOptionView>::system;
-	using MainAppHelper<CustomFilePathOptionView>::app;
+	using MainAppHelper::system;
+	using MainAppHelper::app;
 
 	TextMenuItem cheatsPath
 	{
@@ -350,7 +351,7 @@ class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 		{
 			pushAndShow(makeViewWithName<DataFileSelectView<>>("BS-X BIOS",
 				app().validSearchPath(FS::dirnameUri(system().bsxBiosPath)),
-				[this](CStringView path, FS::file_type type)
+				[this](CStringView path, FS::file_type)
 				{
 					system().bsxBiosPath = path;
 					logMsg("set BS-X bios:%s", path.data());
@@ -372,7 +373,7 @@ class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 		{
 			pushAndShow(makeViewWithName<DataFileSelectView<>>("Sufami Turbo BIOS",
 				app().validSearchPath(FS::dirnameUri(system().sufamiBiosPath)),
-				[this](CStringView path, FS::file_type type)
+				[this](CStringView path, FS::file_type)
 				{
 					system().sufamiBiosPath = path;
 					logMsg("set Sufami Turbo bios:%s", path.data());
@@ -404,12 +405,10 @@ std::unique_ptr<View> EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 	switch(id)
 	{
 		#ifndef SNES9X_VERSION_1_4
-		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach);
+		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach, audio);
 		#endif
 		case ViewID::FILE_PATH_OPTIONS: return std::make_unique<CustomFilePathOptionView>(attach);
 		case ViewID::SYSTEM_ACTIONS: return std::make_unique<CustomSystemActionsView>(attach);
-		case ViewID::EDIT_CHEATS: return std::make_unique<EmuEditCheatListView>(attach);
-		case ViewID::LIST_CHEATS: return std::make_unique<EmuCheatsView>(attach);
 		default: return nullptr;
 	}
 }

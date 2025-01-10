@@ -13,15 +13,21 @@
 	You should have received a copy of the GNU General Public License
 	along with GBA.emu.  If not, see <http://www.gnu.org/licenses/> */
 
-#include <vbam/gba/GBA.h>
-#include <vbam/gba/Sound.h>
-#include <vbam/gba/RTC.h>
-#include <vbam/common/SoundDriver.h>
-#include <vbam/Util.h>
+#include <core/gba/gba.h>
+#include <core/gba/gbaSound.h>
+#include <core/gba/gbaRtc.h>
+#include <core/gba/gbaEeprom.h>
+#include <core/gba/gbaFlash.h>
+#include <core/gba/gbaCheats.h>
+#include <core/gba/gbaGfx.h>
+#include <core/base/sound_driver.h>
+#include <core/base/file_util.h>
 #include <imagine/logger/logger.h>
 #include <imagine/util/algorithm.h>
 #include <imagine/util/math.hh>
+#include <imagine/io/IO.hh>
 #include "MainSystem.hh"
+#include "GBASys.hh"
 
 struct GameSettings
 {
@@ -39,6 +45,17 @@ constexpr GameSettings settings[]
 #include "gba-over.inc"
 };
 
+#ifdef VBAM_ENABLE_DEBUGGER
+int  oldreg[18];
+char oldbuffer[10];
+#endif
+
+// this is an optional hack to change the backdrop/background color:
+// -1: disabled
+// 0x0000 to 0x7FFF: set custom 15 bit color
+//int customBackdropColor = -1;
+
+extern int romSize;
 int systemSaveUpdateCounter = SYSTEM_SAVE_NOT_UPDATED;
 SystemColorMap systemColorMap;
 int emulating{};
@@ -46,6 +63,8 @@ CoreOptions coreOptions
 {
 	.saveType = GBA_SAVE_NONE
 };
+
+void CPUUpdateRenderBuffers(GBASys &gba, bool force);
 
 using namespace EmuEx;
 
@@ -162,7 +181,7 @@ static void resetGameSettings()
 {
 	//agbPrintEnable(0);
 	rtcEnable(0);
-	flashSize = SIZE_FLASH512;
+	g_flashSize = SIZE_FLASH512;
 	eepromSize = SIZE_EEPROM_512;
 }
 
@@ -177,7 +196,7 @@ void setSaveType(int type, int size)
 			eepromSize = size == SIZE_EEPROM_8K ? SIZE_EEPROM_8K : SIZE_EEPROM_512;
 			break;
 		case GBA_SAVE_SRAM:
-			flashSize = SIZE_SRAM;
+			g_flashSize = SIZE_SRAM;
 			break;
 		case GBA_SAVE_FLASH:
 			flashSetSize(size == SIZE_FLASH1M ? SIZE_FLASH1M : SIZE_FLASH512);
@@ -188,20 +207,20 @@ void setSaveType(int type, int size)
 static GbaSensorType detectSensorType(std::string_view gameId)
 {
 	static constexpr std::string_view tiltIds[]{"KHPJ", "KYGJ", "KYGE", "KYGP"};
-	if(IG::contains(tiltIds, gameId))
+	if(std::ranges::contains(tiltIds, gameId))
 	{
 		logMsg("detected accelerometer sensor");
 		return GbaSensorType::Accelerometer;
 	}
 	static constexpr std::string_view gyroIds[]{"RZWJ", "RZWE", "RZWP"};
-	if(IG::contains(gyroIds, gameId))
+	if(std::ranges::contains(gyroIds, gameId))
 	{
 		logMsg("detected gyroscope sensor");
 		return GbaSensorType::Gyroscope;
 	}
 	static constexpr std::string_view lightIds[]{"U3IJ", "U3IE", "U3IP",
 		"U32J", "U32E", "U32P", "U33J"};
-	if(IG::contains(lightIds, gameId))
+	if(std::ranges::contains(lightIds, gameId))
 	{
 		logMsg("detected light sensor");
 		return GbaSensorType::Light;
@@ -230,9 +249,9 @@ void GbaSystem::setGameSpecificSettings(GBASys &gba, int romSize)
 	doMirroring(gba, foundSettings.mirroringEnabled);
 	if(detectedSaveType == GBA_SAVE_AUTO)
 	{
-		utilGBAFindSave(gba.mem.rom, romSize);
+		flashDetectSaveType(gba.mem.rom, romSize);
 		detectedSaveType = coreOptions.saveType;
-		detectedSaveSize = coreOptions.saveType == GBA_SAVE_FLASH ? flashSize : 0;
+		detectedSaveSize = coreOptions.saveType == GBA_SAVE_FLASH ? g_flashSize : 0;
 		logMsg("save type found from rom scan:%s", saveTypeStr(detectedSaveType, detectedSaveSize));
 	}
 	if(auto [type, size] = saveTypeOverride();
@@ -245,7 +264,7 @@ void GbaSystem::setGameSpecificSettings(GBASys &gba, int romSize)
 	{
 		setSaveType(detectedSaveType, detectedSaveSize);
 	}
-	setRTC((RtcMode)optionRtcEmulation.val);
+	setRTC(optionRtcEmulation);
 }
 
 void GbaSystem::setSensorActive(bool on)
@@ -297,12 +316,55 @@ void GbaSystem::clearSensorValues()
 
 }
 
+void preLoadRomSetup(GBASys &gba)
+{
+  romSize = SIZE_ROM;
+  /*if (rom != NULL) {
+    CPUCleanUp();
+  }*/
+
+  systemSaveUpdateCounter = SYSTEM_SAVE_NOT_UPDATED;
+
+  memset(gba.mem.workRAM, 0, sizeof(gba.mem.workRAM));
+}
+
+void postLoadRomSetup(GBASys &gba)
+{
+  uint16_t *temp = (uint16_t *)(gba.mem.rom+((romSize+1)&~1));
+  int i;
+  for (i = (romSize+1)&~1; i < 0x2000000; i+=2) {
+    WRITE16LE(temp, (i >> 1) & 0xFFFF);
+    temp++;
+  }
+
+  memset(gba.mem.bios, 0, sizeof(gba.mem.bios));
+
+  memset(gba.mem.internalRAM, 0, sizeof(gba.mem.internalRAM));
+
+  memset(gba.mem.ioMem.b, 0, sizeof(gba.mem.ioMem));
+
+  gba.lcd.reset();
+
+  flashInit();
+  eepromInit();
+
+  CPUUpdateRenderBuffers(gba, true);
+}
+
+int CPULoadRomWithIO(GBASys &gba, IG::IO &io)
+{
+	preLoadRomSetup(gba);
+	romSize = io.read(gba.mem.rom, romSize);
+  postLoadRomSetup(gba);
+  return romSize;
+}
+
 size_t saveMemorySize()
 {
 	if(!coreOptions.saveType || coreOptions.saveType == GBA_SAVE_NONE)
 		return 0;
   if (coreOptions.saveType == GBA_SAVE_FLASH) {
-  	return flashSize;
+  	return g_flashSize;
   } else if (coreOptions.saveType == GBA_SAVE_SRAM) {
   	return 0x8000;
   }
@@ -368,13 +430,43 @@ void utilReadDataMem(const uint8_t*& data, const variable_desc* desc)
 
 void cheatsSaveGame(uint8_t*& data)
 {
-	utilWriteIntMem(data, cheatsList.size());
-	utilWriteMem(data, cheatsList.data(), CHEATS_LIST_DATA_SIZE);
+	utilWriteIntMem(data, 0);
+	CheatsData cheat{};
+	for([[maybe_unused]] auto i: iotaCount(100))
+	{
+		utilWriteMem(data, &cheat, sizeof(cheat));
+	}
 }
 
 void cheatsReadGame(const uint8_t*& data)
 {
-  int cheats = utilReadIntMem(data);
-  cheatsList.resize(cheats);
-  utilReadMem(cheatsList.data(), data, CHEATS_LIST_DATA_SIZE);
+  utilReadIntMem(data);
+  CheatsData cheat{};
+	for([[maybe_unused]] auto i: iotaCount(100))
+	{
+		utilReadMem(&cheat, data, sizeof(cheat));
+	}
+}
+
+const char *dispModeName(GBALCD::RenderLineFunc renderLine)
+{
+	if (renderLine == mode0RenderLine) return "0";
+	else if (renderLine == mode0RenderLineNoWindow) return "0NW";
+	else if (renderLine == mode0RenderLineAll) return "0A";
+	else if (renderLine == mode1RenderLine) return "1";
+	else if (renderLine == mode1RenderLineNoWindow) return "1NW";
+	else if (renderLine == mode1RenderLineAll) return "1A";
+	else if (renderLine == mode2RenderLine) return "2";
+	else if (renderLine == mode2RenderLineNoWindow) return "2NW";
+	else if (renderLine == mode2RenderLineAll) return "2A";
+	else if (renderLine == mode3RenderLine) return "3";
+	else if (renderLine == mode3RenderLineNoWindow) return "3NW";
+	else if (renderLine == mode3RenderLineAll) return "3A";
+	else if (renderLine == mode4RenderLine) return "4";
+	else if (renderLine == mode4RenderLineNoWindow) return "4NW";
+	else if (renderLine == mode4RenderLineAll) return "4A";
+	else if (renderLine == mode5RenderLine) return "5";
+	else if (renderLine == mode5RenderLineNoWindow) return "5NW";
+	else if (renderLine == mode5RenderLineAll) return "5A";
+	else return "Invalid";
 }

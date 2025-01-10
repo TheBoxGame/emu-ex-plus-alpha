@@ -124,33 +124,28 @@ public:
 	#ifdef __ANDROID__
 	void (GL_APIENTRYP glEGLImageTargetTexStorageEXT)(GLenum target, GLeglImageOES image, const GLint* attrib_list){};
 	#endif
-	#if defined CONFIG_GFX_OPENGL_DEBUG_CONTEXT && defined CONFIG_GFX_OPENGL_ES
-	void GL_APIENTRY (*glDebugMessageCallback)(GLDEBUGPROCKHR callback, const void *userParam){};
-	static constexpr auto DEBUG_OUTPUT = GL_DEBUG_OUTPUT_KHR;
-	#elif defined CONFIG_GFX_OPENGL_DEBUG_CONTEXT
-	void GL_APIENTRY (*glDebugMessageCallback)(GLDEBUGPROC callback, const void *userParam){};
-	static constexpr auto DEBUG_OUTPUT = GL_DEBUG_OUTPUT;
-	#endif
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, GLenum, GL_RED, luminanceFormat){GL_LUMINANCE};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, GLenum, GL_R8,  luminanceInternalFormat){GL_LUMINANCE8};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, GLenum, GL_RG,  luminanceAlphaFormat){GL_LUMINANCE_ALPHA};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, GLenum, GL_RG8, luminanceAlphaInternalFormat){GL_LUMINANCE8_ALPHA8};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, GLenum, GL_RED, alphaFormat){GL_ALPHA};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, GLenum, GL_R8,  alphaInternalFormat){GL_ALPHA8};
+	using GLDebugMessageCallback = void (GL_APIENTRY *)(GLDEBUGPROC callback, const void *userParam);
+	ConditionalMember<Config::OpenGLDebugContext, GLDebugMessageCallback> glDebugMessageCallback{};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, GLenum, GL_RED> luminanceFormat{GL_LUMINANCE};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, GLenum, GL_R8>  luminanceInternalFormat{GL_LUMINANCE8};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, GLenum, GL_RG>  luminanceAlphaFormat{GL_LUMINANCE_ALPHA};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, GLenum, GL_RG8> luminanceAlphaInternalFormat{GL_LUMINANCE8_ALPHA8};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, GLenum, GL_RED> alphaFormat{GL_ALPHA};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, GLenum, GL_R8>  alphaInternalFormat{GL_ALPHA8};
 	TextureSizeSupport textureSizeSupport;
 	//bool hasMemoryBarrier = false;
 	bool hasImmutableTexStorage{};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, bool, true, hasBGRPixels){};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, bool, true, hasTextureSwizzle){};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, bool, true, hasUnpackRowLength){};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, bool, true, hasSamplerObjects){};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, bool, true, hasPBOFuncs){};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, bool, false, useLegacyGLSL){true};
-	IG_UseMemberIfOrConstant((bool)Config::Gfx::OPENGL_ES, bool, true, hasSrgbWriteControl){};
-	IG_UseMemberIf(Config::Gfx::OPENGL_DEBUG_CONTEXT, bool, hasDebugOutput){};
-	IG_UseMemberIf(!Config::Gfx::OPENGL_ES, bool, hasBufferStorage){};
-	IG_UseMemberIf(Config::envIsAndroid, bool, hasEGLImages){};
-	IG_UseMemberIf(Config::Gfx::OPENGL_TEXTURE_TARGET_EXTERNAL, bool, hasExternalEGLImages){};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, bool, true> hasBGRPixels{};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, bool, true> hasTextureSwizzle{};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, bool, true> hasUnpackRowLength{};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, bool, true> hasSamplerObjects{};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, bool, true> hasPBOFuncs{};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, bool, false> useLegacyGLSL{true};
+	ConditionalMemberOr<(bool)Config::Gfx::OPENGL_ES, bool, true> hasSrgbWriteControl{};
+	ConditionalMember<Config::OpenGLDebugContext, bool> hasDebugOutput{};
+	ConditionalMember<!Config::Gfx::OPENGL_ES, bool> hasBufferStorage{};
+	ConditionalMember<Config::envIsAndroid, bool> hasEGLImages{};
+	ConditionalMember<Config::Gfx::OPENGL_TEXTURE_TARGET_EXTERNAL, bool> hasExternalEGLImages{};
 	bool isConfigured{};
 
 	bool hasDrawReadBuffers() const;
@@ -175,7 +170,7 @@ public:
 	RendererTask mainTask;
 	BasicEffect basicEffect_{};
 	Gfx::QuadIndexArray<uint8_t> quadIndices;
-	CustomEvent releaseShaderCompilerEvent{CustomEvent::NullInit{}};
+	CustomEvent releaseShaderCompilerEvent;
 
 	GLRenderer(ApplicationContext);
 	GLDisplay glDisplay() const;
@@ -199,7 +194,6 @@ protected:
 	void setupAppleFenceSync();
 	void setupEglFenceSync(std::string_view eglExtenstionStr);
 	void checkExtensionString(std::string_view extStr);
-	void checkFullExtensionString(const char *fullExtStr);
 	bool attachWindow(Window &, GLBufferConfig, GLColorSpace);
 	NativeWindowFormat nativeWindowFormat(GLBufferConfig) const;
 	bool initBasicEffect();

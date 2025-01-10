@@ -21,6 +21,7 @@
 #include <emuframework/SystemActionsView.hh>
 #include <emuframework/MainMenuView.hh>
 #include <emuframework/FilePicker.hh>
+#include <emuframework/viewUtils.hh>
 #include "MainApp.hh"
 #include "VicePlugin.hh"
 #include <imagine/gui/TextEntry.hh>
@@ -30,6 +31,7 @@
 #include <imagine/io/IO.hh>
 #include <imagine/util/string.h>
 #include <imagine/util/format.hh>
+#include <imagine/logger/logger.h>
 
 extern "C"
 {
@@ -52,10 +54,9 @@ extern "C"
 namespace EmuEx
 {
 
-constexpr SystemLogger log{"C64Menus"};
+constexpr SystemLogger log{"C64.emu"};
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
 constexpr std::string_view driveMenuPrefix[4]
 {
@@ -63,14 +64,6 @@ constexpr std::string_view driveMenuPrefix[4]
 	"Disk 9",
 	"Disk 10",
 	"Disk 11",
-};
-
-constexpr const char *driveResName[4]
-{
-	"Drive8Type",
-	"Drive9Type",
-	"Drive10Type",
-	"Drive11Type",
 };
 
 constexpr std::string_view insertEjectMenuStr[]
@@ -107,8 +100,8 @@ constexpr int defaultPALModel[]
 	VIC20MODEL_VIC20_PAL
 };
 
-constexpr size_t maxModels = std::max({C64MODEL_NUM, DTVMODEL_NUM, C128MODEL_NUM,
-	CBM2MODEL_NUM, PETMODEL_NUM, PLUS4MODEL_NUM, VIC20MODEL_NUM});
+constexpr size_t maxModels = std::max({int(C64MODEL_NUM), int(DTVMODEL_NUM), int(C128MODEL_NUM),
+	int(CBM2MODEL_NUM), PETMODEL_NUM, PLUS4MODEL_NUM, VIC20MODEL_NUM});
 
 static int tapeCounter = 0;
 
@@ -121,14 +114,15 @@ static std::span<const drive_type_info_t> driveInfoList(C64System &sys)
 	return {infoList, size};
 }
 
-class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<CustomVideoOptionView>
+class CustomVideoOptionView : public VideoOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomVideoOptionView>::system;
+	using MainAppHelper::system;
+	using MainAppHelper::app;
 
 	BoolMenuItem cropNormalBorders
 	{
 		"Crop Normal Borders", attachParams(),
-		(bool)system().optionCropNormalBorders,
+		system().optionCropNormalBorders,
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
 			system().optionCropNormalBorders = item.flipBoolValue(*this);
@@ -139,28 +133,22 @@ class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<Custo
 		}
 	};
 
-	TextMenuItem::SelectDelegate setBorderModeDel()
-	{
-		return [this](TextMenuItem &item)
-		{
-			system().optionBorderMode = item.id;
-			system().setBorderMode(item.id);
-		};
-	}
-
 	TextMenuItem borderModeItem[4]
 	{
-		{"Normal", attachParams(), setBorderModeDel(), {.id = VICII_NORMAL_BORDERS}},
-		{"Full",   attachParams(), setBorderModeDel(), {.id = VICII_FULL_BORDERS}},
-		{"Debug",  attachParams(), setBorderModeDel(), {.id = VICII_DEBUG_BORDERS}},
-		{"None",   attachParams(), setBorderModeDel(), {.id = VICII_NO_BORDERS}},
+		{"Normal", attachParams(), {.id = VICII_NORMAL_BORDERS}},
+		{"Full",   attachParams(), {.id = VICII_FULL_BORDERS}},
+		{"Debug",  attachParams(), {.id = VICII_DEBUG_BORDERS}},
+		{"None",   attachParams(), {.id = VICII_NO_BORDERS}},
 	};
 
 	MultiChoiceMenuItem borderMode
 	{
 		"Borders", attachParams(),
-		system().optionBorderMode >= std::size(borderModeItem) ? VICII_NORMAL_BORDERS : (int)system().optionBorderMode,
-		borderModeItem
+		MenuId{system().borderMode()},
+		borderModeItem,
+		{
+			.defaultItemOnSelect = [this](TextMenuItem &item){ system().setBorderMode(item.id); }
+		}
 	};
 
 	std::vector<std::string> paletteName{};
@@ -169,7 +157,7 @@ class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<Custo
 	MultiChoiceMenuItem defaultPalette
 	{
 		"Default Palette", attachParams(),
-		[this]()
+		[this]() -> int
 		{
 			if(system().defaultPaletteName.empty())
 				return 0;
@@ -179,9 +167,37 @@ class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<Custo
 		paletteItem
 	};
 
+	TextHeadingMenuItem colorSettingsHeading{"Color Settings", attachParams()};
+
+	template<int max = 200>
+	DualTextMenuItem::SelectDelegate colorSettingDel(ColorSetting setting)
+	{
+		return [=, this](const Input::Event &e)
+		{
+			pushAndShowNewCollectValueRangeInputView<int, 0, max>(attachParams(), e,
+			max == 200 ? "Input 0 to 200" : "Input 0 to 400", "",
+			[=, this](CollectTextInputView&, auto val)
+			{
+				val *= 10;
+				system().setColorSetting(setting, val);
+				colorSettings[size_t(setting)].set2ndName(system().colorSettingAsString(setting));
+				return true;
+			});
+			return false;
+		};
+	}
+
+	DualTextMenuItem colorSettings[5]
+	{
+		{"Saturation", system().colorSettingAsString(ColorSetting::Saturation), attachParams(), colorSettingDel(ColorSetting::Saturation)},
+		{"Contrast",   system().colorSettingAsString(ColorSetting::Contrast),   attachParams(), colorSettingDel(ColorSetting::Contrast)},
+		{"Brightness", system().colorSettingAsString(ColorSetting::Brightness), attachParams(), colorSettingDel(ColorSetting::Brightness)},
+		{"Gamma",      system().colorSettingAsString(ColorSetting::Gamma),      attachParams(), colorSettingDel<400>(ColorSetting::Gamma)},
+		{"Tint",       system().colorSettingAsString(ColorSetting::Tint),       attachParams(), colorSettingDel(ColorSetting::Tint)}
+	};
+
 public:
-	CustomVideoOptionView(ViewAttachParams attach):
-		VideoOptionView{attach, true},
+	CustomVideoOptionView(ViewAttachParams attach, EmuVideoLayer &layer): VideoOptionView{attach, layer, true},
 		paletteName{system().systemFilesWithExtension(".vpl")}
 	{
 		loadStockItems();
@@ -202,70 +218,54 @@ public:
 				});
 		}
 		item.emplace_back(&defaultPalette);
+		item.emplace_back(&colorSettingsHeading);
+		for(auto &i : colorSettings)
+		{
+			item.emplace_back(&i);
+		}
 	}
 };
 
-class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<CustomAudioOptionView>
+class CustomAudioOptionView : public AudioOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomAudioOptionView>::system;
+	using MainAppHelper::system;
 
 	TextMenuItem sidEngineItem[2]
 	{
-		{"FastSID", attachParams(), setSidEngineDel(), {.id = SID_ENGINE_FASTSID}},
-		{"ReSID",   attachParams(), setSidEngineDel(), {.id = SID_ENGINE_RESID}},
+		{"FastSID", attachParams(), {.id = SID_ENGINE_FASTSID}},
+		{"ReSID",   attachParams(), {.id = SID_ENGINE_RESID}},
 	};
 
 	MultiChoiceMenuItem sidEngine
 	{
 		"SID Engine", attachParams(),
-		[this]()
+		MenuId{system().sidEngine()},
+		sidEngineItem,
 		{
-			int engine = system().intResource("SidEngine");
-			log.info("current SID engine:{}", engine);
-			if((unsigned)engine >= std::size(sidEngineItem))
-			{
-				return SID_ENGINE_FASTSID;
-			}
-			return engine;
-		}(),
-		sidEngineItem
+			.defaultItemOnSelect = [this](TextMenuItem &item){ system().setSidEngine(item.id); }
+		}
 	};
 
 	TextMenuItem reSidSamplingItem[4]
 	{
-		{"Fast",            attachParams(), setReSidSamplingDel(), {.id = SID_RESID_SAMPLING_FAST}},
-		{"Interpolation",   attachParams(), setReSidSamplingDel(), {.id = SID_RESID_SAMPLING_INTERPOLATION}},
-		{"Resampling",      attachParams(), setReSidSamplingDel(), {.id = SID_RESID_SAMPLING_RESAMPLING}},
-		{"Fast Resampling", attachParams(), setReSidSamplingDel(), {.id = SID_RESID_SAMPLING_FAST_RESAMPLING}},
+		{"Fast",            attachParams(), {.id = SID_RESID_SAMPLING_FAST}},
+		{"Interpolation",   attachParams(), {.id = SID_RESID_SAMPLING_INTERPOLATION}},
+		{"Resampling",      attachParams(), {.id = SID_RESID_SAMPLING_RESAMPLING}},
+		{"Fast Resampling", attachParams(), {.id = SID_RESID_SAMPLING_FAST_RESAMPLING}},
 	};
 
 	MultiChoiceMenuItem reSidSampling
 	{
 		"ReSID Sampling", attachParams(),
-		system().optionReSidSampling.val,
-		reSidSamplingItem
+		MenuId{system().reSidSampling()},
+		reSidSamplingItem,
+		{
+			.defaultItemOnSelect = [this](TextMenuItem &item){ system().setReSidSampling(item.id); }
+		}
 	};
 
-	TextMenuItem::SelectDelegate setSidEngineDel()
-	{
-		return [this](TextMenuItem &item)
-		{
-			system().optionSidEngine = item.id;
-			system().setSidEngine(item.id);
-		};
-	}
-
-	TextMenuItem::SelectDelegate setReSidSamplingDel()
-	{
-		return [this](TextMenuItem &item)
-		{
-			system().optionReSidSampling = item.id;
-			system().setReSidSampling(item.id);
-		};
-	}
-
 public:
-	CustomAudioOptionView(ViewAttachParams attach): AudioOptionView{attach, true}
+	CustomAudioOptionView(ViewAttachParams attach, EmuAudio& audio): AudioOptionView{attach, audio, true}
 	{
 		loadStockItems();
 		item.emplace_back(&sidEngine);
@@ -273,16 +273,16 @@ public:
 	}
 };
 
-class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<CustomSystemOptionView>
+class CustomSystemOptionView : public SystemOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemOptionView>::system;
+	using MainAppHelper::system;
 
 	StaticArrayList<TextMenuItem, maxModels> defaultModelItem;
 
 	MultiChoiceMenuItem defaultModel
 	{
 		"Default Model", attachParams(),
-		MenuId{system().optionDefaultModel.val},
+		MenuId{system().defaultModel},
 		defaultModelItem
 	};
 
@@ -293,6 +293,26 @@ class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<Cus
 		[this](BoolMenuItem &item)
 		{
 			system().defaultDriveTrueEmulation = item.flipBoolValue(*this);
+		}
+	};
+
+	TextMenuItem joystickModeItems[3]
+	{
+		{toString(JoystickMode::Port1),    attachParams(), {.id = JoystickMode::Port1}},
+		{toString(JoystickMode::Port2),    attachParams(), {.id = JoystickMode::Port2}},
+		{toString(JoystickMode::Keyboard), attachParams(), {.id = JoystickMode::Keyboard}},
+	};
+
+	MultiChoiceMenuItem joystickMode
+	{
+		"Default Main Joystick Mode", attachParams(),
+		MenuId{system().defaultJoystickMode},
+		joystickModeItems,
+		{
+			.defaultItemOnSelect = [this](MenuItem &item)
+			{
+				system().defaultJoystickMode = JoystickMode(item.id.val);
+			}
 		}
 	};
 
@@ -309,7 +329,7 @@ public:
 				{
 					items.emplace_back(name, attachParams(), [this](TextMenuItem &item)
 					{
-						system().setDefaultModel(item.id);
+						system().defaultModel = item.id;
 					}, MenuItem::Config{.id = i++});
 				}
 				return items;
@@ -319,13 +339,14 @@ public:
 		loadStockItems();
 		item.emplace_back(&defaultModel);
 		item.emplace_back(&defaultTrueDriveEmu);
+		item.emplace_back(&joystickMode);
 	}
 };
 
-class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper<CustomFilePathOptionView>
+class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomFilePathOptionView>::app;
-	using MainAppHelper<CustomFilePathOptionView>::system;
+	using MainAppHelper::app;
+	using MainAppHelper::system;
 	friend class FilePathOptionView;
 
 	TextMenuItem systemFilePath
@@ -387,7 +408,7 @@ public:
 	}
 };
 
-class DatasetteControlsView : public TableView, public MainAppHelper<DatasetteControlsView>
+class DatasetteControlsView : public TableView, public MainAppHelper
 {
 public:
 	public:
@@ -406,6 +427,7 @@ private:
 		"Stop", attachParams(),
 		[this]()
 		{
+			system().enterCPUTrap();
 			system().plugin.datasette_control(0, DATASETTE_CONTROL_STOP);
 			app().showEmulation();
 		}
@@ -416,6 +438,7 @@ private:
 		"Start", attachParams(),
 		[this]()
 		{
+			system().enterCPUTrap();
 			system().plugin.datasette_control(0, DATASETTE_CONTROL_START);
 			app().showEmulation();
 		}
@@ -426,6 +449,7 @@ private:
 		"Forward", attachParams(),
 		[this]()
 		{
+			system().enterCPUTrap();
 			system().plugin.datasette_control(0, DATASETTE_CONTROL_FORWARD);
 			app().showEmulation();
 		}
@@ -436,6 +460,7 @@ private:
 		"Rewind", attachParams(),
 		[this]()
 		{
+			system().enterCPUTrap();
 			system().plugin.datasette_control(0, DATASETTE_CONTROL_REWIND);
 			app().showEmulation();
 		}
@@ -446,6 +471,7 @@ private:
 		"Record", attachParams(),
 		[this]()
 		{
+			system().enterCPUTrap();
 			system().plugin.datasette_control(0, DATASETTE_CONTROL_RECORD);
 			app().showEmulation();
 		}
@@ -456,6 +482,7 @@ private:
 		"Reset", attachParams(),
 		[this](TextMenuItem &, View &view, Input::Event)
 		{
+			system().enterCPUTrap();
 			system().plugin.datasette_control(0, DATASETTE_CONTROL_RESET);
 			updateTapeCounter();
 			view.place();
@@ -468,6 +495,7 @@ private:
 		"Reset Counter", attachParams(),
 		[this](TextMenuItem &, View &view, Input::Event)
 		{
+			system().enterCPUTrap();
 			system().plugin.datasette_control(0, DATASETTE_CONTROL_RESET_COUNTER);
 			updateTapeCounter();
 			view.place();
@@ -500,11 +528,11 @@ private:
 	void onShow() final
 	{
 		updateTapeCounter();
-		tapeCounter.compile();
+		tapeCounter.place();
 	}
 };
 
-class C64IOControlView : public TableView, public MainAppHelper<C64IOControlView>
+class C64IOControlView : public TableView, public MainAppHelper
 {
 private:
 	void updateTapeText()
@@ -518,7 +546,7 @@ public:
 	void onTapeMediaChange()
 	{
 		updateTapeText();
-		tapeSlot.compile();
+		tapeSlot.place();
 	}
 
 	void addTapeFilePickerView(Input::Event e, bool dismissPreviousView)
@@ -527,6 +555,7 @@ public:
 			FilePicker::forMediaChange(attachParams(), e, hasC64TapeExtension,
 			[this, dismissPreviousView](FSPicker &picker, IG::CStringView path, std::string_view name, Input::Event e)
 			{
+				system().enterCPUTrap();
 				if(system().plugin.tape_image_attach(1, path.data()) == 0)
 				{
 					onTapeMediaChange();
@@ -557,6 +586,7 @@ private:
 				multiChoiceView->appendItem(insertEjectMenuStr[1],
 					[this](View &view, Input::Event e)
 					{
+						system().enterCPUTrap();
 						system().plugin.tape_image_detach(1);
 						onTapeMediaChange();
 						view.dismiss();
@@ -591,7 +621,7 @@ public:
 	void onROMMediaChange()
 	{
 		updateROMText();
-		romSlot.compile();
+		romSlot.place();
 	}
 
 	void addCartFilePickerView(Input::Event e, bool dismissPreviousView)
@@ -600,6 +630,7 @@ public:
 			FilePicker::forMediaChange(attachParams(), e, hasC64CartExtension,
 			[this, dismissPreviousView](FSPicker &picker, IG::CStringView path, std::string_view name, Input::Event e)
 			{
+				system().enterCPUTrap();
 				if(system().plugin.cartridge_attach_image(systemCartType(system().currSystem), path.data()) == 0)
 				{
 					onROMMediaChange();
@@ -628,6 +659,7 @@ private:
 				multiChoiceView->appendItem(insertEjectMenuStr[1],
 					[this](View &view, Input::Event e)
 					{
+						system().enterCPUTrap();
 						system().plugin.cartridge_detach_image(-1);
 						onROMMediaChange();
 						view.dismiss();
@@ -650,7 +682,7 @@ private:
 	void onDiskMediaChange(int slot)
 	{
 		updateDiskText(slot);
-		diskSlot[slot].compile();
+		diskSlot[slot].place();
 	}
 
 	void addDiskFilePickerView(Input::Event e, uint8_t slot, bool dismissPreviousView)
@@ -660,6 +692,7 @@ private:
 			[this, slot, dismissPreviousView](FSPicker &picker, IG::CStringView path, std::string_view name, Input::Event e)
 			{
 				log.info("inserting disk in unit:{}", slot+8);
+				system().enterCPUTrap();
 				if(system().plugin.file_system_attach_disk(slot+8, 0, path.data()) == 0)
 				{
 					onDiskMediaChange(slot);
@@ -685,6 +718,7 @@ public:
 			multiChoiceView->appendItem(insertEjectMenuStr[1],
 				[this, slot](View &view, Input::Event e)
 				{
+					system().enterCPUTrap();
 					system().plugin.file_system_detach_disk(slot+8, 0);
 					onDiskMediaChange(slot);
 					view.dismiss();
@@ -706,14 +740,14 @@ private:
 		{u"", attachParams(), [this](Input::Event e) { onSelectDisk(e, 3); }},
 	};
 
-	unsigned currDriveTypeSlot = 0;
+	int8_t currDriveTypeSlot = 0;
 
 	StaticArrayList<TextMenuItem, 18> driveTypeItem;
 
 	MultiChoiceMenuItem drive8Type
 	{
 		"Drive 8 Type", attachParams(),
-		MenuId{system().intResource(driveResName[0])},
+		MenuId{system().driveType(8)},
 		driveTypeItem,
 		{
 			.onSelect = [this](MultiChoiceMenuItem &item, View &view, Input::Event e)
@@ -727,7 +761,7 @@ private:
 	MultiChoiceMenuItem drive9Type
 	{
 		"Drive 9 Type", attachParams(),
-		MenuId{system().intResource(driveResName[1])},
+		MenuId{system().driveType(9)},
 		driveTypeItem,
 		{
 			.onSelect = [this](MultiChoiceMenuItem &item, View &view, Input::Event e)
@@ -741,7 +775,7 @@ private:
 	MultiChoiceMenuItem drive10Type
 	{
 		"Drive 10 Type", attachParams(),
-		MenuId{system().intResource(driveResName[2])},
+		MenuId{system().driveType(10)},
 		driveTypeItem,
 		{
 			.onSelect = [this](MultiChoiceMenuItem &item, View &view, Input::Event e)
@@ -755,7 +789,7 @@ private:
 	MultiChoiceMenuItem drive11Type
 	{
 		"Drive 11 Type", attachParams(),
-		MenuId{system().intResource(driveResName[3])},
+		MenuId{system().driveType(11)},
 		driveTypeItem,
 		{
 			.onSelect = [this](MultiChoiceMenuItem &item, View &view, Input::Event e)
@@ -790,7 +824,7 @@ public:
 						auto slot = currDriveTypeSlot;
 						assumeExpr(slot < 4);
 						system().sessionOptionSet();
-						system().setIntResource(driveResName[slot], item.id);
+						system().setDriveType(slot + 8, item.id);
 						onDiskMediaChange(slot);
 					}, MenuItem::Config{.id = entry.id});
 				}
@@ -819,11 +853,12 @@ public:
 	}
 };
 
-class Vic20MemoryExpansionsView : public TableView, public MainAppHelper<Vic20MemoryExpansionsView>
+class Vic20MemoryExpansionsView : public TableView, public MainAppHelper
 {
 	void setRamBlock(const char *name, bool on)
 	{
 		system().sessionOptionSet();
+		system().enterCPUTrap();
 		system().setIntResource(name, on);
 	}
 
@@ -897,14 +932,14 @@ public:
 	{}
 };
 
-class MachineOptionView : public TableView, public MainAppHelper<MachineOptionView>
+class MachineOptionView : public TableView, public MainAppHelper
 {
 	StaticArrayList<TextMenuItem, maxModels> modelItem;
 
 	MultiChoiceMenuItem model
 	{
 		"Model", attachParams(),
-		MenuId{system().sysModel()},
+		MenuId{system().model()},
 		modelItem
 	};
 
@@ -920,48 +955,44 @@ class MachineOptionView : public TableView, public MainAppHelper<MachineOptionVi
 	BoolMenuItem autostartWarp
 	{
 		"Autostart Fast-forward", attachParams(),
-		(bool)system().optionAutostartWarp,
+		system().autostartWarp(),
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
 			system().sessionOptionSet();
-			system().optionAutostartWarp = item.flipBoolValue(*this);
-			system().setAutostartWarp(system().optionAutostartWarp);
+			system().setAutostartWarp(item.flipBoolValue(*this));
 		}
 	};
 
 	BoolMenuItem autostartTDE
 	{
 		"Autostart Handles TDE", attachParams(),
-		(bool)system().optionAutostartTDE,
+		system().autostartTDE(),
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
 			system().sessionOptionSet();
-			system().optionAutostartTDE = item.flipBoolValue(*this);
-			system().setAutostartTDE(system().optionAutostartTDE);
+			system().setAutostartTDE(item.flipBoolValue(*this));
 		}
 	};
 
 	BoolMenuItem autostartBasicLoad
 	{
-		"Autostart Basic Load (Omit ',1')", attachParams(),
-		(bool)system().optionAutostartBasicLoad,
+		"Load To BASIC Start (Disk)", attachParams(),
+		bool(system().intResource("AutostartBasicLoad")),
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
 			system().sessionOptionSet();
-			system().optionAutostartBasicLoad = item.flipBoolValue(*this);
-			system().setAutostartBasicLoad(system().optionAutostartBasicLoad);
+			system().setIntResource("AutostartBasicLoad", item.flipBoolValue(*this));
 		}
 	};
 
 	BoolMenuItem trueDriveEmu
 	{
 		"True Drive Emulation (TDE)", attachParams(),
-		(bool)system().optionDriveTrueEmulation,
+		system().driveTrueEmulation(),
 		[this](BoolMenuItem &item, View &, Input::Event e)
 		{
 			system().sessionOptionSet();
-			system().optionDriveTrueEmulation = item.flipBoolValue(*this);
-			system().setDriveTrueEmulation(system().optionDriveTrueEmulation);
+			system().setDriveTrueEmulation(item.flipBoolValue(*this));
 		}
 	};
 
@@ -973,7 +1004,7 @@ class MachineOptionView : public TableView, public MainAppHelper<MachineOptionVi
 	MultiChoiceMenuItem palette
 	{
 		"Palette", attachParams(),
-		[this]()
+		[this]() -> int
 		{
 			if(!system().usingExternalPalette())
 				return 0;
@@ -985,46 +1016,31 @@ class MachineOptionView : public TableView, public MainAppHelper<MachineOptionVi
 
 	TextHeadingMenuItem cartHeader{"Cartridges", attachParams()};
 
-	TextMenuItem::SelectDelegate setReuDel(int val)
-	{
-		return [this, val](){ system().setRuntimeReuSize(val); };
-	}
-
 	TextMenuItem reuItem[9]
 	{
-		{"Off",    attachParams(), setReuDel(0)},
-		{"128KiB", attachParams(), setReuDel(128)},
-		{"256KiB", attachParams(), setReuDel(256)},
-		{"512KiB", attachParams(), setReuDel(512)},
-		{"1MiB",   attachParams(), setReuDel(1024)},
-		{"2MiB",   attachParams(), setReuDel(2048)},
-		{"4MiB",   attachParams(), setReuDel(4096)},
-		{"8MiB",   attachParams(), setReuDel(8192)},
-		{"16MiB",  attachParams(), setReuDel(16384)},
+		{"Off",    attachParams(), {.id = 0}},
+		{"128KiB", attachParams(), {.id = 128}},
+		{"256KiB", attachParams(), {.id = 256}},
+		{"512KiB", attachParams(), {.id = 512}},
+		{"1MiB",   attachParams(), {.id = 1024}},
+		{"2MiB",   attachParams(), {.id = 2048}},
+		{"4MiB",   attachParams(), {.id = 4096}},
+		{"8MiB",   attachParams(), {.id = 8192}},
+		{"16MiB",  attachParams(), {.id = 16384}},
 	};
 
 	MultiChoiceMenuItem reu
 	{
 		"Ram Expansion Module", attachParams(),
-		[this]()
+		MenuId{system().intResource("REU") ? system().intResource("REUsize") : 0},
+		reuItem,
 		{
-			system().sessionOptionSet();
-			if(!system().intResource("REU"))
-				return 0;
-			switch(system().intResource("REUsize"))
+			.defaultItemOnSelect = [this](TextMenuItem &item)
 			{
-				default: return 0;
-				case 128: return 1;
-				case 256: return 2;
-				case 512: return 3;
-				case 1024: return 4;
-				case 2048: return 5;
-				case 4096: return 6;
-				case 8192: return 7;
-				case 16384: return 8;
+				system().sessionOptionSet();
+				system().setReuSize(item.id);
 			}
-		}(),
-		reuItem
+		}
 	};
 
 	StaticArrayList<MenuItem*, 10> menuItem;
@@ -1048,8 +1064,7 @@ public:
 					items.emplace_back(name, attachParams(), [this](TextMenuItem &item)
 					{
 						system().sessionOptionSet();
-						system().optionModel = item.id;
-						system().setSysModel(item.id);
+						system().setModel(item.id);
 					}, MenuItem::Config{.id = i++});
 				}
 				return items;
@@ -1093,10 +1108,10 @@ public:
 	}
 };
 
-class CustomSystemActionsView : public SystemActionsView, public MainAppHelper<CustomSystemActionsView>
+class CustomSystemActionsView : public SystemActionsView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemActionsView>::system;
-	using MainAppHelper<CustomSystemActionsView>::app;
+	using MainAppHelper::system;
+	using MainAppHelper::app;
 
 	TextMenuItem c64IOControl
 	{
@@ -1128,76 +1143,75 @@ class CustomSystemActionsView : public SystemActionsView, public MainAppHelper<C
 		{
 			if(!item.active())
 				return;
-			auto multiChoiceView = makeViewWithName<TextTableView>(item, 4);
+			auto multiChoiceView = makeViewWithName<TextTableView>(item, 5);
 			multiChoiceView->appendItem("NTSC w/ True Drive Emu",
 				[this]()
 				{
 					system().sessionOptionSet();
-					system().optionDriveTrueEmulation = 1;
-					system().optionModel = defaultNTSCModel[std::to_underlying(system().currSystem)];
+					system().setDriveTrueEmulation(true);
 					app().reloadSystem();
+					system().setModel(defaultNTSCModel[std::to_underlying(system().currSystem)]);
+					app().showEmulation();
 				});
 			multiChoiceView->appendItem("NTSC",
 				[this]()
 				{
 					system().sessionOptionSet();
-					system().optionDriveTrueEmulation = 0;
-					system().optionModel = defaultNTSCModel[std::to_underlying(system().currSystem)];
+					system().setDriveTrueEmulation(false);
 					app().reloadSystem();
+					system().setModel(defaultNTSCModel[std::to_underlying(system().currSystem)]);
+					app().showEmulation();
 				});
 			multiChoiceView->appendItem("PAL w/ True Drive Emu",
 				[this]()
 				{
 					system().sessionOptionSet();
-					system().optionDriveTrueEmulation = 1;
-					system().optionModel = defaultPALModel[std::to_underlying(system().currSystem)];
+					system().setDriveTrueEmulation(true);
 					app().reloadSystem();
+					system().setModel(defaultPALModel[std::to_underlying(system().currSystem)]);
+					app().showEmulation();
 				});
 			multiChoiceView->appendItem("PAL",
 				[this]()
 				{
 					system().sessionOptionSet();
-					system().optionDriveTrueEmulation = 0;
-					system().optionModel = defaultPALModel[std::to_underlying(system().currSystem)];
+					system().setDriveTrueEmulation(false);
 					app().reloadSystem();
+					system().setModel(defaultPALModel[std::to_underlying(system().currSystem)]);
+					app().showEmulation();
+				});
+			multiChoiceView->appendItem("Just Restart",
+				[this]()
+				{
+					app().reloadSystem();
+					app().showEmulation();
 				});
 			pushAndShow(std::move(multiChoiceView), e);
 		}
 	};
 
-	TextMenuItem joystickModeItem[3]
+	TextMenuItem joystickModeItems[4]
 	{
-		{
-			"Normal", attachParams(),
-			[this]()
-			{
-				system().sessionOptionSet();
-				system().setJoystickMode(JoystickMode::NORMAL);
-			},
-		},
-		{
-			"Swapped", attachParams(),
-			[this]()
-			{
-				system().sessionOptionSet();
-				system().setJoystickMode(JoystickMode::SWAPPED);
-			},
-		},
-		{
-			"Keyboard Cursor", attachParams(),
-			[this]()
-			{
-				system().sessionOptionSet();
-				system().setJoystickMode(JoystickMode::KEYBOARD);
-			},
-		},
+		{toString(JoystickMode::Auto),     attachParams(), {.id = JoystickMode::Auto}},
+		{toString(JoystickMode::Port1),    attachParams(), {.id = JoystickMode::Port1}},
+		{toString(JoystickMode::Port2),    attachParams(), {.id = JoystickMode::Port2}},
+		{toString(JoystickMode::Keyboard), attachParams(), {.id = JoystickMode::Keyboard}},
 	};
 
 	MultiChoiceMenuItem joystickMode
 	{
-		"Joystick Mode", attachParams(),
-		(int)system().optionSwapJoystickPorts,
-		joystickModeItem
+		"Main Joystick Mode", attachParams(),
+		MenuId{system().effectiveJoystickMode},
+		joystickModeItems,
+		{
+			.defaultItemOnSelect = [this](MenuItem &item, View &view, const Input::Event &)
+			{
+				system().sessionOptionSet();
+				system().setJoystickMode(JoystickMode(item.id.val));
+				view.dismiss();
+				return false; // active item is set in onShow()
+			}
+		}
 	};
 
 	BoolMenuItem warpMode
@@ -1213,7 +1227,7 @@ class CustomSystemActionsView : public SystemActionsView, public MainAppHelper<C
 	BoolMenuItem autostartOnLaunch
 	{
 		"Autostart On Launch", attachParams(),
-		(bool)system().optionAutostartOnLaunch,
+		system().optionAutostartOnLaunch,
 		[this](BoolMenuItem &item)
 		{
 			system().sessionOptionSet();
@@ -1244,14 +1258,15 @@ public:
 		SystemActionsView::onShow();
 		c64IOControl.setActive(system().hasContent());
 		options.setActive(system().hasContent());
-		warpMode.setBoolValue(*system().plugin.warp_mode_enabled);
+		warpMode.setBoolValue(*system().plugin.warp_mode_enabled, *this);
+		joystickMode.setSelected(MenuId{system().effectiveJoystickMode}, *this);
 	}
 };
 
-class CustomMainMenuView : public MainMenuView, public MainAppHelper<CustomMainMenuView>
+class CustomMainMenuView : public MainMenuView, public MainAppHelper
 {
-	using MainAppHelper<CustomMainMenuView>::app;
-	using MainAppHelper<CustomMainMenuView>::system;
+	using MainAppHelper::app;
+	using MainAppHelper::system;
 
 	TextMenuItem systemPlugin
 	{
@@ -1261,10 +1276,10 @@ class CustomMainMenuView : public MainMenuView, public MainAppHelper<CustomMainM
 			auto multiChoiceView = makeViewWithName<TextTableView>(item, VicePlugin::SYSTEMS);
 			for(auto i : iotaCount(VicePlugin::SYSTEMS))
 			{
-				multiChoiceView->appendItem(VicePlugin::systemName((ViceSystem)i),
+				multiChoiceView->appendItem(VicePlugin::systemName(ViceSystem(i)),
 					[this, i](View &view, Input::Event e)
 					{
-						system().optionViceSystem = i;
+						system().optionViceSystem = ViceSystem(i);
 						view.dismiss(false);
 						app().pushAndShowModalView(makeView<YesNoAlertView>("Changing systems needs app restart, exit now?",
 							YesNoAlertView::Delegates{.onYes = [this]{ appContext().exit(); }}), e);
@@ -1282,7 +1297,7 @@ class CustomMainMenuView : public MainMenuView, public MainAppHelper<CustomMainM
 		"Start System With Blank Disk", attachParams(),
 		[this](TextMenuItem &item, View &, Input::Event e)
 		{
-			app().pushAndShowNewCollectTextInputView(attachParams(), e, "Input Disk Name", "",
+			pushAndShowNewCollectTextInputView(attachParams(), e, "Input Disk Name", "",
 				[this](CollectTextInputView &view, const char *str)
 				{
 					if(str)
@@ -1359,7 +1374,7 @@ class CustomMainMenuView : public MainMenuView, public MainAppHelper<CustomMainM
 		"Start System With Blank Tape", attachParams(),
 		[this](TextMenuItem &item, View &, Input::Event e)
 		{
-			app().pushAndShowNewCollectTextInputView(attachParams(), e, "Input Tape Name", "",
+			pushAndShowNewCollectTextInputView(attachParams(), e, "Input Tape Name", "",
 				[this](CollectTextInputView &view, const char *str)
 				{
 					if(str)
@@ -1454,8 +1469,8 @@ std::unique_ptr<View> EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 	{
 		case ViewID::MAIN_MENU: return std::make_unique<CustomMainMenuView>(attach);
 		case ViewID::SYSTEM_ACTIONS: return std::make_unique<CustomSystemActionsView>(attach);
-		case ViewID::VIDEO_OPTIONS: return std::make_unique<CustomVideoOptionView>(attach);
-		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach);
+		case ViewID::VIDEO_OPTIONS: return std::make_unique<CustomVideoOptionView>(attach, videoLayer);
+		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach, audio);
 		case ViewID::SYSTEM_OPTIONS: return std::make_unique<CustomSystemOptionView>(attach);
 		case ViewID::FILE_PATH_OPTIONS: return std::make_unique<CustomFilePathOptionView>(attach);
 		default: return nullptr;

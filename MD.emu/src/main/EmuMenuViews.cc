@@ -19,11 +19,11 @@
 #include <emuframework/DataPathSelectView.hh>
 #include <emuframework/UserPathSelectView.hh>
 #include <emuframework/SystemActionsView.hh>
-#include "EmuCheatViews.hh"
 #include "MainApp.hh"
 #include <imagine/gui/AlertView.hh>
 #include <imagine/fs/FS.hh>
 #include <imagine/util/format.hh>
+#include <imagine/util/string.h>
 #include "input.h"
 #include "io_ctrl.h"
 #include "vdp_ctrl.h"
@@ -31,10 +31,9 @@
 namespace EmuEx
 {
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 
-class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionView>
+class ConsoleOptionView : public TableView, public MainAppHelper
 {
 	BoolMenuItem sixButtonPad
 	{
@@ -112,10 +111,10 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 	MultiChoiceMenuItem videoSystem
 	{
 		"Video System", attachParams(),
-		system().optionVideoSystem.val,
+		system().optionVideoSystem.value(),
 		videoSystemItem,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [](auto idx, Gfx::Text& t)
 			{
 				if(idx == 0)
 				{
@@ -148,7 +147,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 		std::min((int)config.region_detect, 4),
 		regionItem,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [](auto idx, Gfx::Text& t)
 			{
 				if(idx == 0)
 				{
@@ -221,9 +220,9 @@ public:
 	}
 };
 
-class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<CustomAudioOptionView>
+class CustomAudioOptionView : public AudioOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomAudioOptionView>::system;
+	using MainAppHelper::system;
 
 	BoolMenuItem smsFM
 	{
@@ -237,17 +236,17 @@ class CustomAudioOptionView : public AudioOptionView, public MainAppHelper<Custo
 	};
 
 public:
-	CustomAudioOptionView(ViewAttachParams attach): AudioOptionView{attach, true}
+	CustomAudioOptionView(ViewAttachParams attach, EmuAudio& audio): AudioOptionView{attach, audio, true}
 	{
 		loadStockItems();
 		item.emplace_back(&smsFM);
 	}
 };
 
-class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<CustomSystemOptionView>
+class CustomSystemOptionView : public SystemOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemOptionView>::app;
-	using MainAppHelper<CustomSystemOptionView>::system;
+	using MainAppHelper::app;
+	using MainAppHelper::system;
 
 	BoolMenuItem bigEndianSram
 	{
@@ -259,7 +258,7 @@ class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<Cus
 				"Warning, this changes the format of SRAM saves files. "
 				"Turn on to make them compatible with other emulators like Gens. "
 				"Any SRAM loaded with the incorrect setting will be corrupted.",
-				YesNoAlertView::Delegates{.onYes = [&]{ system().optionBigEndianSram = item.flipBoolValue(*this); }}), e);
+				YesNoAlertView::Delegates{.onYes = [this]{ system().optionBigEndianSram = bigEndianSram.flipBoolValue(*this); }}), e);
 		}
 	};
 
@@ -271,10 +270,10 @@ public:
 	}
 };
 
-class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper<CustomFilePathOptionView>
+class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomFilePathOptionView>::app;
-	using MainAppHelper<CustomFilePathOptionView>::system;
+	using MainAppHelper::app;
+	using MainAppHelper::system;
 
 	TextMenuItem cheatsPath
 	{
@@ -368,12 +367,10 @@ std::unique_ptr<View> EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 {
 	switch(id)
 	{
-		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach);
+		case ViewID::AUDIO_OPTIONS: return std::make_unique<CustomAudioOptionView>(attach, audio);
 		case ViewID::SYSTEM_ACTIONS: return std::make_unique<CustomSystemActionsView>(attach);
 		case ViewID::SYSTEM_OPTIONS: return std::make_unique<CustomSystemOptionView>(attach);
 		case ViewID::FILE_PATH_OPTIONS: return std::make_unique<CustomFilePathOptionView>(attach);
-		case ViewID::EDIT_CHEATS: return std::make_unique<EmuEditCheatListView>(attach);
-		case ViewID::LIST_CHEATS: return std::make_unique<EmuCheatsView>(attach);
 		default: return nullptr;
 	}
 }

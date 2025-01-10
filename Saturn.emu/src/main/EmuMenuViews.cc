@@ -27,25 +27,25 @@
 #include <imagine/gui/AlertView.hh>
 #include <imagine/util/format.hh>
 #include <ss/cart.h>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
 
-template <class T>
-using MainAppHelper = EmuAppHelper<T, MainApp>;
+using MainAppHelper = EmuAppHelperBase<MainApp>;
 using namespace MDFN_IEN_SS;
 
-constexpr SystemLogger log{"AppMenus"};
+constexpr SystemLogger log{"Saturn.emu"};
 
 static bool hasBIOSExtension(std::string_view name)
 {
 	return endsWithAnyCaseless(name, ".bin");
 }
 
-class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper<CustomFilePathOptionView>
+class CustomFilePathOptionView : public FilePathOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomFilePathOptionView>::app;
-	using MainAppHelper<CustomFilePathOptionView>::system;
+	using MainAppHelper::app;
+	using MainAppHelper::system;
 
 	TextMenuItem naBiosPath
 	{
@@ -181,7 +181,7 @@ constexpr auto regionToString(int t)
 	return "";
 }
 
-class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionView>
+class ConsoleOptionView : public TableView, public MainAppHelper
 {
 	TextMenuItem cartTypeItems[8]
 	{
@@ -201,7 +201,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 		MenuId{system().cartType},
 		cartTypeItems,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [](auto idx, Gfx::Text &t)
 			{
 				if(idx == 0)
 				{
@@ -238,7 +238,7 @@ class ConsoleOptionView : public TableView, public MainAppHelper<ConsoleOptionVi
 		MenuId{system().region},
 		regionItems,
 		{
-			.onSetDisplayString = [this](auto idx, Gfx::Text &t)
+			.onSetDisplayString = [](auto idx, Gfx::Text &t)
 			{
 				if(idx == 0)
 				{
@@ -480,17 +480,17 @@ public:
 		},
 		discItems
 		{
-			[&]()
+			[&](auto &system)
 			{
-				auto discItems = DynArray<TextMenuItem>{system().CDInterfaces.size() + 1};
+				auto discItems = DynArray<TextMenuItem>{system.CDInterfaces.size() + 1};
 				discItems[0] = {"Eject", attachParams(), setDiscDel(), {.id = -1}};
 				const char *numStrings[] {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14" , "15", "16"};
-				for(auto i : iotaCount(system().CDInterfaces.size()))
+				for(auto i : iotaCount(system.CDInterfaces.size()))
 				{
 					discItems[i + 1] = {numStrings[i], attachParams(), setDiscDel(), {.id = i}};
 				}
 				return discItems;
-			}()
+			}(system())
 		}
 	{
 		menuItems.emplace_back(&cartType);
@@ -530,9 +530,9 @@ public:
 	}
 };
 
-class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<CustomSystemOptionView>
+class CustomSystemOptionView : public SystemOptionView, public MainAppHelper
 {
-	using MainAppHelper<CustomSystemOptionView>::system;
+	using MainAppHelper::system;
 
 	BoolMenuItem autoSetRTC
 	{
@@ -567,19 +567,22 @@ class CustomSystemOptionView : public SystemOptionView, public MainAppHelper<Cus
 		}
 	};
 
+	BoolMenuItem saveFilenameType = saveFilenameTypeMenuItem(*this, system());
+
 public:
 	CustomSystemOptionView(ViewAttachParams attach): SystemOptionView{attach, true}
 	{
 		loadStockItems();
 		item.emplace_back(&biosLanguage);
 		item.emplace_back(&autoSetRTC);
+		item.emplace_back(&saveFilenameType);
 	}
 };
 
-class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<CustomVideoOptionView>
+class CustomVideoOptionView : public VideoOptionView, public MainAppHelper
 {
-	using  MainAppHelper<CustomVideoOptionView>::app;
-	using  MainAppHelper<CustomVideoOptionView>::system;
+	using  MainAppHelper::app;
+	using  MainAppHelper::system;
 
 	BoolMenuItem showHOverscan
 	{
@@ -622,7 +625,7 @@ class CustomVideoOptionView : public VideoOptionView, public MainAppHelper<Custo
 	};
 
 public:
-	CustomVideoOptionView(ViewAttachParams attach): VideoOptionView{attach, true}
+	CustomVideoOptionView(ViewAttachParams attach, EmuVideoLayer &layer): VideoOptionView{attach, layer, true}
 	{
 		loadStockItems();
 		item.emplace_back(&systemSpecificHeading);
@@ -639,7 +642,7 @@ std::unique_ptr<View> EmuApp::makeCustomView(ViewAttachParams attach, ViewID id)
 		case ViewID::FILE_PATH_OPTIONS: return std::make_unique<CustomFilePathOptionView>(attach);
 		case ViewID::SYSTEM_OPTIONS: return std::make_unique<CustomSystemOptionView>(attach);
 		case ViewID::SYSTEM_ACTIONS: return std::make_unique<CustomSystemActionsView>(attach);
-		case ViewID::VIDEO_OPTIONS: return std::make_unique<CustomVideoOptionView>(attach);
+		case ViewID::VIDEO_OPTIONS: return std::make_unique<CustomVideoOptionView>(attach, videoLayer);
 		default: return nullptr;
 	}
 }

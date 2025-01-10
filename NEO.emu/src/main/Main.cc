@@ -22,6 +22,7 @@
 #include <imagine/util/ScopeGuard.hh>
 #include <imagine/util/format.hh>
 #include <imagine/util/zlib.hh>
+#include <imagine/logger/logger.h>
 
 extern "C"
 {
@@ -32,9 +33,8 @@ extern "C"
 	#include <gngeo/timer.h>
 	#include <gngeo/memory.h>
 	#include <gngeo/video.h>
-	#include <gngeo/screen.h>
-	#include <gngeo/menu.h>
 	#include <gngeo/resfile.h>
+	#include <gngeo/menu.h>
 
 	CONFIG conf{};
 	GN_Rect visible_area;
@@ -45,7 +45,6 @@ extern "C"
 	CONF_ITEM* cf_get_item_by_name(const char *nameStr)
 	{
 		using namespace EmuEx;
-		//logMsg("getting conf item %s", name);
 		static CONF_ITEM conf{};
 		std::string_view name{nameStr};
 		if(name == "dump")
@@ -92,6 +91,7 @@ CLINK void main_frame(void *emuTaskPtr, void *neoSystemPtr, void *emuVideoPtr);
 namespace EmuEx
 {
 
+constexpr SystemLogger log{"NEO.emu"};
 const char *EmuSystem::creditsViewStr = CREDITS_INFO_STRING "(c) 2012-2024\nRobert Broglia\nwww.explusalpha.com\n\nPortions (c) the\nGngeo Team\ncode.google.com/p/gngeo";
 bool EmuSystem::handlesGenericIO = false; // TODO: need to re-factor GnGeo file loading code
 bool EmuSystem::canRenderRGBA8888 = false;
@@ -112,7 +112,6 @@ NeoSystem::NeoSystem(ApplicationContext ctx):
 	sdlSurf.w = FBResX;
 	sdlSurf.pixels = screenBuff;
 	buffer = &sdlSurf;
-	conf.sound = 1;
 	conf.sample_rate = 4096; // must be initialized to any valid value for YM2610Init()
 	strcpy(rompathConfItem.data.dt_str.str, ".");
 	if(!Config::envIsAndroid)
@@ -230,7 +229,7 @@ size_t NeoSystem::writeState(std::span<uint8_t> buff, SaveStateFlags flags)
 
 void NeoSystem::loadBackupMemory(EmuApp &app)
 {
-	logMsg("loading nvram & memcard");
+	log.info("loading nvram & memcard");
 	app.setupStaticBackupMemoryFile(nvramFileIO, ".nv", 0x10000);
 	app.setupStaticBackupMemoryFile(memcardFileIO, ".memcard", 0x800);
 	nvramFileIO.read(memory.sram, 0x10000, 0);
@@ -241,12 +240,12 @@ void NeoSystem::onFlushBackupMemory(EmuApp &app, BackupMemoryDirtyFlags flags)
 {
 	if(flags & SRAM_DIRTY_BIT)
 	{
-		logMsg("saving nvram");
+		log.info("saving nvram");
 		nvramFileIO.write(memory.sram, 0x10000, 0);
 	}
 	if(flags & MEMCARD_DIRTY_BIT)
 	{
-		logMsg("saving memcard");
+		log.info("saving memcard");
 		memcardFileIO.write(memory.memcard, 0x800, 0);
 	}
 }
@@ -266,7 +265,7 @@ void NeoSystem::closeSystem()
 static auto openGngeoDataIO(IG::ApplicationContext ctx, IG::CStringView filename)
 {
 	#ifdef __ANDROID__
-	return ctx.openAsset(filename, IO::AccessHint::All);
+	return ctx.openAsset(filename, {.accessHint = IOAccessHint::All});
 	#else
 	auto &datafilePath = static_cast<NeoApp&>(ctx.application()).system().datafilePath;
 	return FS::findFileInArchive(ArchiveIO{datafilePath}, filename);
@@ -288,11 +287,11 @@ void NeoSystem::loadContent(IO &, EmuSystemCreateParams, OnLoadProgressDelegate 
 		throw std::runtime_error("This game isn't recognized");
 	}
 	auto freeDrv = IG::scopeGuard([&](){ free(drv); });
-	logMsg("rom set %s, %s", drv->name, drv->longname);
+	log.info("rom set {}, {}", drv->name, drv->longname);
 	auto gnoFilename = EmuSystem::contentSaveFilePath(".gno");
 	if(optionCreateAndUseCache && ctx.fileUriExists(gnoFilename))
 	{
-		logMsg("loading .gno file");
+		log.info("loading .gno file");
 		char errorStr[1024];
 		if(!init_game(&ctx, gnoFilename.data(), errorStr))
 		{
@@ -309,7 +308,7 @@ void NeoSystem::loadContent(IO &, EmuSystemCreateParams, OnLoadProgressDelegate 
 
 		if(optionCreateAndUseCache && !ctx.fileUriExists(gnoFilename))
 		{
-			logMsg("%s doesn't exist, creating", gnoFilename.data());
+			log.info("{} doesn't exist, creating", gnoFilename);
 			dr_save_gno(&memory.rom, gnoFilename.data());
 		}
 	}
@@ -409,13 +408,16 @@ CLINK ROM_DEF *res_load_drv(void *contextPtr, const char *name)
 	}
 
 	// Fill out the driver struct
-	auto drv = (ROM_DEF*)calloc(sizeof(ROM_DEF), 1);
+	auto drv = (ROM_DEF*)calloc(1, sizeof(ROM_DEF));
 	io.read(drv->name, 32);
 	io.read(drv->parent, 32);
 	io.read(drv->longname, 128);
 	drv->year = io.get<uint32_t>(); // TODO: LE byte-swap on uint32_t reads
 	for(auto i : iotaCount(10))
+	{
 		drv->romsize[i] = io.get<uint32_t>();
+		//EmuEx::log.debug("ROM region:{} size:{:X}", i, drv->romsize[i]);
+	}
 	drv->nb_romfile = io.get<uint32_t>();
 	for(auto i : iotaCount(drv->nb_romfile))
 	{
@@ -425,6 +427,8 @@ CLINK ROM_DEF *res_load_drv(void *contextPtr, const char *name)
 		drv->rom[i].dest = io.get<uint32_t>();
 		drv->rom[i].size = io.get<uint32_t>();
 		drv->rom[i].crc = io.get<uint32_t>();
+		//EmuEx::log.debug("ROM file:{} region:{}, src:{:X} dest:{:X} size:{:X} crc:{:X}", drv->rom[i].filename,
+		//	drv->rom[i].region, drv->rom[i].src, drv->rom[i].dest, drv->rom[i].size, drv->rom[i].crc);
 	}
 	return drv;
 }
@@ -456,6 +460,11 @@ CLINK void screen_update(void *emuTaskCtxPtr, void *neoSystemPtr, void *emuVideo
 	{
 		//logMsg("skipping render");
 	}
+}
+
+CLINK int currentZ80Timeslice()
+{
+	return IG::remap(memory.vid.current_line, 0, 264, 0, 256);
 }
 
 void sramWritten()

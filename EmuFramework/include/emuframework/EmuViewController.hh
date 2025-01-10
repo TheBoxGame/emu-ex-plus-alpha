@@ -51,18 +51,17 @@ class EmuMenuViewStack : public ViewStack
 {
 public:
 	EmuMenuViewStack(ViewAttachParams, EmuApp &);
-	bool inputEvent(const Input::Event &) final;
+	bool inputEvent(const Input::Event&) final;
 	constexpr EmuApp &app() { return *emuAppPtr; }
 
 protected:
 	EmuApp *emuAppPtr;
 };
 
-class EmuViewController final: public ViewController, public EmuAppHelper<EmuViewController>
+class EmuViewController final: public ViewController, public EmuAppHelper
 {
 public:
 	EmuViewController(ViewAttachParams, VController &, EmuVideoLayer &, EmuSystem &);
-	void pushAndShowMainMenu(ViewAttachParams, EmuVideoLayer &, EmuAudio &);
 	void pushAndShow(std::unique_ptr<View>, const Input::Event &, bool needsNavView, bool isModal = false) final;
 	using ViewController::pushAndShow;
 	void pushAndShowModal(std::unique_ptr<View>, const Input::Event &, bool needsNavView);
@@ -71,7 +70,7 @@ public:
 	void popTo(View &v) final;
 	void dismissView(View &v, bool refreshLayout) final;
 	void dismissView(int idx, bool refreshLayout) final;
-	bool inputEvent(const Input::Event &) final;
+	bool inputEvent(const Input::Event&) final;
 	bool extraWindowInputEvent(const Input::Event &e);
 	void showEmulationView(FrameTimeConfig);
 	void showMenuView(bool updateTopView);
@@ -103,12 +102,13 @@ public:
 	void onHide();
 	void movePopupToWindow(IG::Window &win);
 	void moveEmuViewToWindow(IG::Window &win);
+	View &top() const { return viewStack.top(); }
 
 public:
 	EmuView emuView;
 	EmuInputView inputView;
 	ToastView popup;
-	IG_UseMemberIf(Gfx::supportsPresentationTime, SteadyClockTimePoint, presentTime){};
+	ConditionalMember<Gfx::supportsPresentationTime, SteadyClockTimePoint> presentTime{};
 protected:
 	EmuMenuViewStack viewStack;
 	bool showingEmulation{};

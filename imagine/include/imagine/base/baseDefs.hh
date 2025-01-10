@@ -20,6 +20,7 @@
 #include <imagine/util/DelegateFunc.hh>
 #include <imagine/util/string/CStringView.hh>
 #include <imagine/util/enum.hh>
+#include <imagine/util/variant.hh>
 #include <vector>
 #include <memory>
 #include <string_view>
@@ -181,6 +182,9 @@ WISE_ENUM_CLASS((Rotation, uint8_t),
 	LEFT,
 	ANY);
 
+template<>
+constexpr bool isValidProperty(const Rotation &v) { return enumIsValidUpToLast(v); }
+
 constexpr bool isSideways(Rotation r) { return r == Rotation::LEFT || r == Rotation::RIGHT; }
 
 static constexpr int APP_ON_EXIT_PRIORITY = 0;
@@ -245,6 +249,11 @@ struct WindowConfig;
 class ApplicationContext;
 class Application;
 struct ApplicationInitParams;
+class FrameTimer;
+struct FDEventSourceDesc;
+class FDEventSource;
+class EventLoop;
+struct TimerDesc;
 
 using WindowContainer = std::vector<std::unique_ptr<Window>>;
 using ScreenContainer = std::vector<std::unique_ptr<Screen>>;
@@ -252,8 +261,8 @@ using InputDeviceContainer = std::vector<std::unique_ptr<Input::Device>>;
 
 // App events & delegates
 
-// Sent when another process sends the app a message
-struct InterProcessMessageEvent{CStringView filename;};
+// Sent when another process or the system file picker requests opening a document
+struct DocumentPickerEvent{CStringView uri, displayName;};
 
 // Sent when OS needs app to free any cached data
 struct FreeCachesEvent{bool running;};
@@ -261,16 +270,22 @@ struct FreeCachesEvent{bool running;};
 // Sent when a Screen is connected/disconnected or its properties change
 struct ScreenChangeEvent{Screen &screen; ScreenChange change;};
 
-using ApplicationEvent = std::variant<InterProcessMessageEvent, FreeCachesEvent,
+using ApplicationEventVariant = std::variant<DocumentPickerEvent, FreeCachesEvent,
 	ScreenChangeEvent, Input::DeviceChangeEvent, Input::DevicesEnumeratedEvent>;
 
-using OnApplicationEvent = DelegateFunc<void(ApplicationContext, ApplicationEvent)>;
+class ApplicationEvent: public ApplicationEventVariant, public AddVisit
+{
+public:
+	using ApplicationEventVariant::ApplicationEventVariant;
+	using AddVisit::visit;
+};
+
+using OnApplicationEvent = DelegateFunc<void(ApplicationContext, const ApplicationEvent&)>;
 using MainThreadMessageDelegate = DelegateFunc<void(ApplicationContext)>;
 using ResumeDelegate = DelegateFunc<bool (ApplicationContext, bool focused)>;
 using ExitDelegate = DelegateFunc<bool (ApplicationContext, bool backgrounded)>;
 using DeviceOrientationChangedDelegate = DelegateFunc<void (ApplicationContext, Rotation newRotation)>;
 using SystemOrientationChangedDelegate = DelegateFunc<void (ApplicationContext, Rotation oldRotation, Rotation newRotation)>;
-using SystemDocumentPickerDelegate = DelegateFunc<void(CStringView uri, CStringView displayName)>;
 using TextFieldDelegate = DelegateFunc<void (const char *str)>;
 using SensorChangedDelegate = DelegateFunc<void (SensorValues)>;
 
@@ -299,14 +314,32 @@ struct DismissRequestEvent{};
 // Sent when the window is dismissed
 struct DismissEvent{};
 
-using WindowEvent = std::variant<WindowSurfaceChangeEvent, DrawEvent,
+using WindowEventVariant = std::variant<WindowSurfaceChangeEvent, DrawEvent,
 	Input::Event, FocusChangeEvent, DragDropEvent,
 	DismissRequestEvent, DismissEvent>;
 
-using OnWindowEvent = DelegateFunc<bool(Window &, WindowEvent)>;
-using WindowInitDelegate = DelegateFunc<void (ApplicationContext, Window &)>;
+class WindowEvent;
 
-using ScreenId = std::conditional_t<Config::envIsAndroid, int, void*>;
-using NativeDisplayConnection = void*;
+using OnWindowEvent = DelegateFunc<bool(Window&, const WindowEvent&)>;
+using WindowInitDelegate = DelegateFunc<void (ApplicationContext, Window&)>;
+
+using PollEventFlags = int;
+using PollEventDelegate = DelegateFunc<bool (int fd, PollEventFlags)>;
+
+class CallbackDelegate : public DelegateFunc<bool ()>
+{
+public:
+	using DelegateFuncBase::DelegateFuncBase;
+
+	constexpr CallbackDelegate(Callable<void> auto&& f):
+		DelegateFuncBase
+		{
+			[=]()
+			{
+				f();
+				return false;
+			}
+		} {}
+};
 
 }

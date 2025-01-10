@@ -95,7 +95,7 @@ static PixelFormat effectFormat(IG::PixelFormat format, Gfx::ColorSpace colSpace
 	assert(format);
 	if(colSpace == Gfx::ColorSpace::SRGB)
 	{
-		return IG::PIXEL_RGBA8888;
+		return IG::PixelFmtRGBA8888;
 	}
 	return format;
 }
@@ -166,7 +166,7 @@ void VideoImageEffect::compileEffect(Gfx::Renderer &r, EffectDesc desc, bool use
 
 	auto vShader = makeEffectVertexShader(r,
 		ctx.openAsset(IG::format<FS::PathString>("shaders/{}{}", fallbackStr, desc.vShaderFilename),
-			IOAccessHint::All).buffer().stringView());
+		{.accessHint = IOAccessHint::All}).buffer().stringView());
 	if(!vShader)
 	{
 		throw std::runtime_error{"GPU rejected shader (vertex compile error)"};
@@ -174,7 +174,7 @@ void VideoImageEffect::compileEffect(Gfx::Renderer &r, EffectDesc desc, bool use
 
 	auto fShader = makeEffectFragmentShader(r,
 		ctx.openAsset(IG::format<FS::PathString>("shaders/{}{}", fallbackStr, desc.fShaderFilename),
-		IOAccessHint::All).buffer().stringView());
+		{.accessHint = IOAccessHint::All}).buffer().stringView());
 	if(!fShader)
 	{
 		throw std::runtime_error{"GPU rejected shader (fragment compile error)"};
@@ -193,7 +193,7 @@ void VideoImageEffect::compileEffect(Gfx::Renderer &r, EffectDesc desc, bool use
 	updateProgramUniforms(r);
 }
 
-void VideoImageEffect::updateProgramUniforms(Gfx::Renderer &r)
+void VideoImageEffect::updateProgramUniforms(Gfx::Renderer&)
 {
 	if(srcTexelDeltaU != -1)
 		prog.uniform(srcTexelDeltaU, 1.0f / (float)inputImgSize.x, 1.0f / (float)inputImgSize.y);

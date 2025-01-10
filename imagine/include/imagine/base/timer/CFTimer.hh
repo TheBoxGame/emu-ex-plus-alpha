@@ -15,7 +15,7 @@
 	You should have received a copy of the GNU General Public License
 	along with Imagine.  If not, see <http://www.gnu.org/licenses/> */
 
-#include <imagine/base/timerDefs.hh>
+#include <imagine/base/baseDefs.hh>
 #include <imagine/time/Time.hh>
 #include <imagine/util/used.hh>
 #include <CoreFoundation/CoreFoundation.h>
@@ -28,6 +28,7 @@ struct CFTimerInfo
 {
 	CallbackDelegate callback{};
 	CFRunLoopRef loop{};
+	CFRunLoopRef setLoop{};
 };
 
 class CFTimer
@@ -35,15 +36,14 @@ class CFTimer
 public:
 	using TimePoint = SteadyClockTimePoint;
 
-	constexpr CFTimer() = default;
-	CFTimer(CallbackDelegate c) : CFTimer{nullptr, c} {}
-	CFTimer(const char *debugLabel, CallbackDelegate c);
-	CFTimer(CFTimer &&o) noexcept;
-	CFTimer &operator=(CFTimer &&o) noexcept;
+	CFTimer(TimerDesc, CallbackDelegate);
+	CFTimer(CFTimer&&) noexcept;
+	CFTimer &operator=(CFTimer&&) noexcept;
 	~CFTimer();
+	const char* debugLabel() const { return debugLabel_; }
 
 protected:
-	IG_UseMemberIf(Config::DEBUG_BUILD, const char *, debugLabel){};
+	ConditionalMember<Config::DEBUG_BUILD, const char *> debugLabel_{};
 	CFRunLoopTimerRef timer{};
 	std::unique_ptr<CFTimerInfo> info;
 

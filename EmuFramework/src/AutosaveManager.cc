@@ -15,7 +15,8 @@
 
 #include <emuframework/AutosaveManager.hh>
 #include <emuframework/EmuApp.hh>
-#include "EmuOptions.hh"
+#include <emuframework/Option.hh>
+#include <emuframework/EmuOptions.hh>
 #include "pathUtils.hh"
 #include <imagine/io/MapIO.hh>
 #include <imagine/io/FileIO.hh>
@@ -32,8 +33,8 @@ AutosaveManager::AutosaveManager(EmuApp &app_):
 	saveTimer
 	{
 		defaultSaveFreq,
-		"AutosaveManager::autosaveTimer",
-		[this]()
+		{.debugLabel = "AutosaveManager::autosaveTimer"},
+		[this]
 		{
 			log.debug("running autosave timer");
 			save();
@@ -63,7 +64,7 @@ bool AutosaveManager::load(AutosaveActionSource src, LoadAutosaveMode mode)
 		if(saveOnlyBackupMemory && src == AutosaveActionSource::Auto)
 			return true;
 		if(!stateIO)
-			stateIO = appContext().openFileUri(statePath(), {}, OpenFlags::createFile());
+			stateIO = appContext().openFileUri(statePath(), OpenFlags::createFile());
 		if(stateIO.getExpected<uint8_t>(0)) // check if state contains data
 		{
 			if(mode == LoadAutosaveMode::NoState)
@@ -150,7 +151,7 @@ bool AutosaveManager::deleteSlot(std::string_view name)
 		return false;
 	auto ctx = appContext();
 	if(!ctx.forEachInDirectoryUri(system().contentLocalSaveDirectory(name),
-			[this, ctx](const FS::directory_entry &e)
+		[ctx](const FS::directory_entry &e)
 		{
 			ctx.removeFileUri(e.path());
 			return true;
@@ -234,19 +235,19 @@ SteadyClockTime AutosaveManager::timerFrequency() const
 	return saveTimer.frequency;
 }
 
-bool AutosaveManager::readConfig(MapIO &io, unsigned key, size_t size)
+bool AutosaveManager::readConfig(MapIO &io, unsigned key)
 {
 	switch(key)
 	{
 		default: return false;
-		case CFGKEY_AUTOSAVE_LAUNCH_MODE: return readOptionValue(io, size, autosaveLaunchMode, [](auto m){return m <= lastEnum<AutosaveLaunchMode>;});
-		case CFGKEY_AUTOSAVE_TIMER_MINS: return readOptionValue<decltype(saveTimer.frequency.count())>(io, size, [&](auto m)
+		case CFGKEY_AUTOSAVE_LAUNCH_MODE: return readOptionValue(io, autosaveLaunchMode, [](auto m){return m <= lastEnum<AutosaveLaunchMode>;});
+		case CFGKEY_AUTOSAVE_TIMER_MINS: return readOptionValue<decltype(saveTimer.frequency.count())>(io, [&](auto m)
 		{
 			Minutes mins = Minutes{m};
 			if(mins >= Minutes{0} && mins <= maxAutosaveSaveFreq)
 				saveTimer.frequency = mins;
 		});
-		case CFGKEY_AUTOSAVE_CONTENT: return readOptionValue(io, size, saveOnlyBackupMemory);
+		case CFGKEY_AUTOSAVE_CONTENT: return readOptionValue(io, saveOnlyBackupMemory);
 	}
 }
 
@@ -257,8 +258,6 @@ void AutosaveManager::writeConfig(FileIO &io) const
 	writeOptionValueIfNotDefault(io, CFGKEY_AUTOSAVE_CONTENT, saveOnlyBackupMemory, false);
 }
 
-EmuSystem &AutosaveManager::system() { return app.system(); }
-const EmuSystem &AutosaveManager::system() const { return app.system(); }
 ApplicationContext AutosaveManager::appContext() const { return system().appContext(); }
 
 }

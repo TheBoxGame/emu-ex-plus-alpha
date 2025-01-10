@@ -205,8 +205,8 @@ void FCEU_DispMessage( __FCEU_PRINTF_FORMAT const char *format, int disppos, ...
 #define FCEUI_DispMessage FCEU_DispMessage
 
 int FCEUI_DecodePAR(const char *code, int *a, int *v, int *c, int *type);
-int FCEUI_DecodeGG(const char *str, int *a, int *v, int *c);
-int FCEUI_AddCheat(const char *name, uint32 addr, uint8 val, int compare, int type);
+int FCEUI_DecodeGG(const char *str, uint16 *a, uint8 *v, int *c);
+int FCEUI_AddCheat(const char *name, uint32 addr, uint8 val, int compare, int type, int status = 1, bool rebuild = true);
 int FCEUI_DelCheat(uint32 which);
 int FCEUI_ToggleCheat(uint32 which);
 int FCEUI_GlobalToggleCheat(int global_enable);
@@ -285,6 +285,8 @@ void FCEUI_SetEmulationPaused(int val);
 void FCEUI_ToggleEmulationPause();
 void FCEUI_PauseForDuration(int secs);
 int FCEUI_PauseFramesRemaining();
+void FCEUI_SetNetPlayPause(bool value);
+bool FCEUI_GetNetPlayPause();
 
 //indicates whether input aids should be drawn (such as crosshairs, etc; usually in fullscreen mode)
 bool FCEUD_ShouldDrawInputAids();
@@ -375,7 +377,11 @@ bool FCEU_IsValidUI(EFCEUI ui);
 
 #ifdef __cplusplus
 extern "C"
+{
 #endif
-FILE *FCEUI_UTF8fopen_C(const char *n, const char *m);
+	FILE *FCEUI_UTF8fopen_C(const char *n, const char *m);
+#ifdef __cplusplus
+} // extern C
+#endif
 
 #endif //__DRIVER_H_

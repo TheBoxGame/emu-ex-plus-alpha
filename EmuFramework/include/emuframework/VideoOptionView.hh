@@ -29,35 +29,25 @@ class EmuVideoLayer;
 class EmuVideo;
 enum class ImageEffectId : uint8_t;
 enum class ImageChannel : uint8_t;
-enum class VideoSystem: uint8_t;
 
-class VideoOptionView : public TableView, public EmuAppHelper<VideoOptionView>
+class VideoOptionView : public TableView, public EmuAppHelper
 {
 public:
-	VideoOptionView(ViewAttachParams attach, bool customMenu = false);
+	VideoOptionView(ViewAttachParams attach, EmuVideoLayer &videoLayer, bool customMenu = false);
 	void place() final;
 	void loadStockItems();
-	void setEmuVideoLayer(EmuVideoLayer &videoLayer);
 
 protected:
 	static constexpr int MAX_ASPECT_RATIO_ITEMS = 5;
-	EmuVideoLayer *videoLayer{};
-
+	EmuVideoLayer &videoLayer;
 	StaticArrayList<TextMenuItem, 5> textureBufferModeItem;
 	MultiChoiceMenuItem textureBufferMode;
-	TextMenuItem frameIntervalItem[5];
-	MultiChoiceMenuItem frameInterval;
-	TextMenuItem frameRateItems[4];
-	VideoSystem activeVideoSystem{};
-	MultiChoiceMenuItem frameRate;
-	MultiChoiceMenuItem frameRatePAL;
-	IG_UseMemberIf(enableFrameTimeStats, BoolMenuItem, frameTimeStats);
 	StaticArrayList<TextMenuItem, MAX_ASPECT_RATIO_ITEMS> aspectRatioItem;
 	MultiChoiceMenuItem aspectRatio;
-	TextMenuItem zoomItem[6];
-	MultiChoiceMenuItem zoom;
-	TextMenuItem viewportZoomItem[4];
-	MultiChoiceMenuItem viewportZoom;
+	TextMenuItem contentScaleItems[6];
+	MultiChoiceMenuItem contentScale;
+	TextMenuItem menuScaleItems[4];
+	MultiChoiceMenuItem menuScale;
 	TextMenuItem contentRotationItem[5];
 	MultiChoiceMenuItem contentRotation;
 	TextMenuItem placeVideo;
@@ -72,21 +62,10 @@ protected:
 	MultiChoiceMenuItem imgEffectPixelFormat;
 	StaticArrayList<TextMenuItem, 4> windowPixelFormatItem;
 	MultiChoiceMenuItem windowPixelFormat;
-	IG_UseMemberIf(Config::envIsLinux && Config::BASE_MULTI_WINDOW, BoolMenuItem, secondDisplay);
-	IG_UseMemberIf(Config::BASE_MULTI_SCREEN && Config::BASE_MULTI_WINDOW, BoolMenuItem, showOnSecondScreen);
-	TextMenuItem imageBuffersItem[3];
-	MultiChoiceMenuItem imageBuffers;
-	TextMenuItem frameClockItems[3];
-	MultiChoiceMenuItem frameClock;
-	IG_UseMemberIf(Gfx::supportsPresentModes, TextMenuItem, presentModeItems[3]);
-	IG_UseMemberIf(Gfx::supportsPresentModes, MultiChoiceMenuItem, presentMode);
+	ConditionalMember<Config::envIsLinux && Config::BASE_MULTI_WINDOW, BoolMenuItem> secondDisplay;
+	ConditionalMember<Config::BASE_MULTI_SCREEN && Config::BASE_MULTI_WINDOW, BoolMenuItem> showOnSecondScreen;
 	TextMenuItem renderPixelFormatItem[3];
 	MultiChoiceMenuItem renderPixelFormat;
-	IG_UseMemberIf(Config::multipleScreenFrameRates, std::vector<TextMenuItem>, screenFrameRateItems);
-	IG_UseMemberIf(Config::multipleScreenFrameRates, MultiChoiceMenuItem, screenFrameRate);
-	IG_UseMemberIf(Gfx::supportsPresentationTime, TextMenuItem, presentationTimeItems[3]);
-	IG_UseMemberIf(Gfx::supportsPresentationTime, MultiChoiceMenuItem, presentationTime);
-	BoolMenuItem blankFrameInsertion;
 	TextMenuItem brightnessItem[2];
 	TextMenuItem redItem[2];
 	TextMenuItem greenItem[2];
@@ -95,14 +74,11 @@ protected:
 	MultiChoiceMenuItem red;
 	MultiChoiceMenuItem green;
 	MultiChoiceMenuItem blue;
-	TextHeadingMenuItem visualsHeading;
-	TextHeadingMenuItem screenShapeHeading;
 	TextHeadingMenuItem colorLevelsHeading;
 	TextHeadingMenuItem advancedHeading;
 	TextHeadingMenuItem systemSpecificHeading;
-	StaticArrayList<MenuItem*, 38> item;
+	StaticArrayList<MenuItem*, 32> item;
 
-	bool onFrameTimeChange(VideoSystem vidSys, SteadyClockTime time);
 	TextMenuItem::SelectDelegate setVideoBrightnessCustomDel(ImageChannel);
 	void setAllColorLevelsSelected(MenuId);
 	EmuVideo &emuVideo() const;

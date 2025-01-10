@@ -25,7 +25,7 @@ namespace EmuEx
 
 using namespace IG;
 
-class SystemOptionView : public TableView, public EmuAppHelper<SystemOptionView>
+class SystemOptionView : public TableView, public EmuAppHelper
 {
 public:
 	SystemOptionView(ViewAttachParams attach, bool customMenu = false);
@@ -45,10 +45,13 @@ protected:
 	TextMenuItem rewindStatesItem[4];
 	MultiChoiceMenuItem rewindStates;
 	DualTextMenuItem rewindTimeInterval;
-	IG_UseMemberIf(Config::envIsAndroid, BoolMenuItem, performanceMode);
-	IG_UseMemberIf(Config::envIsAndroid && Config::DEBUG_BUILD, BoolMenuItem, noopThread);
-	IG_UseMemberIf(Config::cpuAffinity, TextMenuItem, cpuAffinity);
-	StaticArrayList<MenuItem*, 30> item;
+	ConditionalMember<Config::envIsAndroid, BoolMenuItem> performanceMode;
+	ConditionalMember<Config::envIsAndroid && Config::DEBUG_BUILD, BoolMenuItem> noopThread;
+	ConditionalMember<Config::cpuAffinity, TextMenuItem> cpuAffinity;
+	TextHeadingMenuItem autosaveHeading;
+	TextHeadingMenuItem rewindHeading;
+	TextHeadingMenuItem otherHeading;
+	StaticArrayList<MenuItem*, 33> item;
 };
 
 }

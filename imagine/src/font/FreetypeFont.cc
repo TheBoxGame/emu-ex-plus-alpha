@@ -255,7 +255,7 @@ FreetypeFont::FreetypeFont(FT_Library library, IO io):
 FreetypeFont::FreetypeFont(FT_Library library, const char *name):
 	library{library}
 {
-	loadIntoNextSlot(FileIO{name, IOAccessHint::All});
+	loadIntoNextSlot(FileIO{name, {.accessHint = IOAccessHint::Random}});
 }
 
 Font FontManager::makeFromFile(IO io) const
@@ -290,7 +290,7 @@ Font FontManager::makeBoldSystem() const
 
 Font FontManager::makeFromAsset(const char *name, const char *appName) const
 {
-	return {library.get(), ctx.openAsset(name, IOAccessHint::All, {}, appName)};
+	return {library.get(), ctx.openAsset(name, {.accessHint = IOAccessHint::Random}, appName)};
 }
 
 FreetypeFaceData::FreetypeFaceData(FreetypeFaceData &&o) noexcept
@@ -348,7 +348,7 @@ bool FreetypeFont::loadIntoNextSlot(CStringView name)
 		return false;
 	try
 	{
-		return loadIntoNextSlot(FileIO{name, IOAccessHint::All});
+		return loadIntoNextSlot(FileIO{name, {.accessHint = IOAccessHint::Random}});
 	}
 	catch(...)
 	{
@@ -370,7 +370,6 @@ FreetypeFont::GlyphRenderData FreetypeFont::makeGlyphRenderData(int idx, Freetyp
 			logErr("error activating size object");
 			return {};
 		}
-		std::errc ec;
 		auto data = makeGlyphRenderDataWithFace(library, font.face, idx, keepPixData);
 		if(!data)
 		{
@@ -522,7 +521,7 @@ PixmapView IG::GlyphImage::pixmap()
 {
 	return
 		{
-			{{(int)bitmap.width, (int)bitmap.rows}, IG::PIXEL_FMT_A8},
+			{{(int)bitmap.width, (int)bitmap.rows}, IG::PixelFmtA8},
 			bitmap.buffer,
 			{bitmap.pitch, PixmapView::Units::BYTE}
 		};

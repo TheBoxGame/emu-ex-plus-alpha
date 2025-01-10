@@ -79,7 +79,7 @@ void TestFramework::placeFrameStatsText()
 	}
 }
 
-void TestFramework::place(Gfx::Renderer &r, WRect viewBounds_, WRect testRect)
+void TestFramework::place(WRect viewBounds_, WRect testRect)
 {
 	viewBounds = viewBounds_;
 	placeCPUStatsText();
@@ -91,7 +91,6 @@ void TestFramework::frameUpdate(Gfx::RendererTask &rTask, IG::Window &win, IG::F
 {
 	auto timestamp = frameParams.timestamp;
 	// CPU stats
-	auto &screen = *win.screen();
 	bool updatedCPUStats = false;
 	if(frames % 8 == 0)
 	{
@@ -197,7 +196,7 @@ void TestFramework::draw(Gfx::RendererCommands &cmds, Gfx::ClipRect bounds, int 
 	}
 }
 
-void TestFramework::finish(Gfx::RendererTask &task, SteadyClockTimePoint frameTime)
+void TestFramework::finish(SteadyClockTimePoint frameTime)
 {
 	endTime = frameTime;
 	if(onTestFinished)
@@ -234,7 +233,7 @@ DrawTest::DrawTest(IG::ApplicationContext ctx, ViewAttachParams attach, WSize pi
 {
 	using namespace IG::Gfx;
 	auto &r = attach.renderer();
-	IG::PixmapDesc pixmapDesc = {pixmapSize, IG::PIXEL_FMT_RGB565};
+	PixmapDesc pixmapDesc = {pixmapSize, PixelFmtRGB565};
 	TextureConfig texConf{pixmapDesc, SamplerConfigs::noMipClamp};
 	texture = r.makePixmapBufferTexture(texConf, bufferMode);
 	if(!texture) [[unlikely]]
@@ -288,11 +287,11 @@ void WriteTest::frameUpdateTest(Gfx::RendererTask &rendererTask, Screen &screen,
 	{
 		uint16_t writeColor;
 		if(!droppedFrames)
-			writeColor = IG::PIXEL_DESC_RGB565.build(.7, .7, .7, 1.);
+			writeColor = IG::PixelDescRGB565.build(.7, .7, .7, 1.);
 		else if(droppedFrames % 2 == 0)
-			writeColor = IG::PIXEL_DESC_RGB565.build(.7, .7, .0, 1.);
+			writeColor = IG::PixelDescRGB565.build(.7, .7, .0, 1.);
 		else
-			writeColor = IG::PIXEL_DESC_RGB565.build(.7, .0, .0, 1.);
+			writeColor = IG::PixelDescRGB565.build(.7, .0, .0, 1.);
 		for(auto i : iotaCount(pix.w() * pix.h()))
 		{
 			((uint16_t*)pix.data())[i] = writeColor;

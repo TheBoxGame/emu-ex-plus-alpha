@@ -35,10 +35,8 @@ constexpr bool forceNoVAOs = false; // for testing non-VAO code paths
 constexpr bool defaultToFullErrorChecks = true;
 constexpr GLuint VATTR_POS = 0, VATTR_TEX_UV = 1, VATTR_COLOR = 2;
 
-static constexpr GL::API glAPI =
-	Config::Gfx::OPENGL_ES ? GL::API::OPENGL_ES : GL::API::OPENGL;
+constexpr GL::API glAPI = Config::Gfx::OPENGL_ES ? GL::API::OpenGLES : GL::API::OpenGL;
 
-float rotationRadians(Rotation o);
 int toSwapInterval(Window &win, PresentMode mode);
 
 constexpr GLenum asGLType(AttribType type)

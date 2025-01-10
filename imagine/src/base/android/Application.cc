@@ -44,13 +44,25 @@ namespace IG
 constexpr SystemLogger log{"App"};
 static JavaVM* jVM{};
 static void *mainLibHandle{};
-static constexpr bool unloadNativeLibOnDestroy{};
+[[maybe_unused]] constexpr bool unloadNativeLibOnDestroy{};
 pid_t mainThreadId{};
+pthread_key_t jEnvPThreadKey{};
 
 static void setNativeActivityCallbacks(ANativeActivity *nActivity);
 
 AndroidApplication::AndroidApplication(ApplicationInitParams initParams):
-	BaseApplication{({initParams.nActivity->instance = this; initParams.nActivity;})}
+	BaseApplication{({initParams.nActivity->instance = this; initParams.nActivity;})},
+	userActivityCallback
+	{
+		{.debugLabel = "userActivityCallback"},
+		[this, ctx = ApplicationContext{initParams.nActivity}]
+		{
+			if(!keepScreenOn)
+			{
+				jSetWinFlags(ctx.mainThreadJniEnv(), ctx.baseActivityObject(), 0, AWINDOW_FLAG_KEEP_SCREEN_ON);
+			}
+		}
+	}
 {
 	ApplicationContext ctx{initParams.nActivity};
 	auto env = ctx.mainThreadJniEnv();
@@ -83,14 +95,14 @@ PixelFormat makePixelFormatFromAndroidFormat(int32_t androidFormat)
 	switch(androidFormat)
 	{
 		case AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM:
-		case AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM: return PIXEL_FMT_RGBA8888;
-		case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM: return PIXEL_FMT_RGB565;
-		case ANDROID_BITMAP_FORMAT_RGBA_4444: return PIXEL_FMT_RGBA4444;
-		case ANDROID_BITMAP_FORMAT_A_8: return PIXEL_FMT_I8;
+		case AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM: return PixelFmtRGBA8888;
+		case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM: return PixelFmtRGB565;
+		case ANDROID_BITMAP_FORMAT_RGBA_4444: return PixelFmtRGBA4444;
+		case ANDROID_BITMAP_FORMAT_A_8: return PixelFmtI8;
 		default:
 		{
 			log.error("unhandled format");
-			return PIXEL_FMT_I8;
+			return PixelFmtI8;
 		}
 	}
 }
@@ -105,7 +117,7 @@ MutablePixmapView makePixmapView(JNIEnv *env, jobject bitmap, void *pixels, Pixe
 		return {};
 	}
 	//log.info("android bitmap info:size {}x{}, stride:{}", info.width, info.height, info.stride);
-	if(format == PIXEL_FMT_NONE)
+	if(format == PixelFmtUnset)
 	{
 		// use format from bitmap info
 		format = makePixelFormatFromAndroidFormat(info.format);
@@ -113,7 +125,7 @@ MutablePixmapView makePixmapView(JNIEnv *env, jobject bitmap, void *pixels, Pixe
 	return {{{(int)info.width, (int)info.height}, format}, pixels, {(int)info.stride, MutablePixmapView::Units::BYTE}};
 }
 
-void ApplicationContext::exit(int returnVal)
+void ApplicationContext::exit(int)
 {
 	// TODO: return exit value as activity result
 	application().setExitingActivityState();
@@ -137,7 +149,7 @@ FS::PathString AndroidApplication::externalMediaPath(JNIEnv *env, jobject baseAc
 
 UniqueFileDescriptor AndroidApplication::openFileUriFd(JNIEnv *env, jobject baseActivity, CStringView uri, OpenFlags openFlags) const
 {
-	int fd = openUriFd(env, baseActivity, env->NewStringUTF(uri), jint(std::bit_cast<uint8_t>(openFlags)));
+	int fd = openUriFd(env, baseActivity, env->NewStringUTF(uri), jint(std::bit_cast<OpenFlags::BitSetClassInt>(openFlags)));
 	if(fd == -1)
 	{
 		if constexpr(Config::DEBUG_BUILD)
@@ -145,7 +157,7 @@ UniqueFileDescriptor AndroidApplication::openFileUriFd(JNIEnv *env, jobject base
 		if(openFlags.test)
 			return -1;
 		else
-			throw std::system_error{ENOENT, std::system_category(), uri};
+			throw std::system_error{ENOENT, std::generic_category(), uri};
 	}
 	log.info("opened fd:{} file URI:{}", fd, uri);
 	return fd;
@@ -175,6 +187,12 @@ FS::FileString AndroidApplication::fileUriDisplayName(JNIEnv *env, jobject baseA
 	return FS::FileString{JNI::StringChars{env, uriDisplayName(env, baseActivity, env->NewStringUTF(uri))}};
 }
 
+FS::file_type AndroidApplication::fileUriType(JNIEnv* env, jobject baseActivity, CStringView uri) const
+{
+	return FS::file_type(uriFileType(env, baseActivity, env->NewStringUTF(uri)));
+}
+
+
 bool AndroidApplication::removeFileUri(JNIEnv *env, jobject baseActivity, CStringView uri, bool isDir) const
 {
 	log.info("removing {} URI:{}", isDir ? "directory" : "file", uri);
@@ -202,12 +220,12 @@ bool AndroidApplication::forEachInDirectoryUri(JNIEnv *env, jobject baseActivity
 		if(flags.test)
 			return false;
 		else
-			throw std::system_error{ENOENT, std::system_category(), uri};
+			throw std::system_error{ENOENT, std::generic_category(), uri};
 	}
 	return true;
 }
 
-static FS::PathString mainSOPath(ApplicationContext ctx)
+inline FS::PathString mainSOPath(ApplicationContext ctx)
 {
 	if(ctx.androidSDK() < 24)
 	{
@@ -276,12 +294,12 @@ jobject AndroidApplication::makeFontRenderer(JNIEnv *env, jobject baseActivity)
 	return jNewFontRenderer(env, baseActivity);
 }
 
-uint32_t toAHardwareBufferFormat(PixelFormatID format)
+uint32_t toAHardwareBufferFormat(PixelFormatId format)
 {
 	switch(format)
 	{
-		case PIXEL_RGBA8888: return AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
-		case PIXEL_RGB565: return AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM;
+		case PixelFormatId::RGBA8888: return AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+		case PixelFormatId::RGB565: return AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM;
 		default: return 0;
 	}
 }
@@ -290,7 +308,7 @@ const char *aHardwareBufferFormatStr(uint32_t format)
 {
 	switch(format)
 	{
-		case 0: return "None";
+		case 0: return "Unset";
 		case AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM: return "RGBA8888";
 		case AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM: return "RGBX8888";
 		case AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM: return "RGB888";
@@ -301,7 +319,7 @@ const char *aHardwareBufferFormatStr(uint32_t format)
 
 void AndroidApplication::initActivity(JNIEnv *env, jobject baseActivity, jclass baseActivityClass, int32_t androidSDK)
 {
-	pthread_key_create(&jEnvKey,
+	pthread_key_create(&jEnvPThreadKey,
 		[](void *)
 		{
 			if(!jVM)
@@ -312,7 +330,7 @@ void AndroidApplication::initActivity(JNIEnv *env, jobject baseActivity, jclass 
 			}
 			jVM->DetachCurrentThread();
 		});
-	pthread_setspecific(jEnvKey, env);
+	pthread_setspecific(jEnvPThreadKey, env);
 
 	// BaseActivity JNI functions
 	jSetRequestedOrientation = {env, baseActivityClass, "setRequestedOrientation", "(I)V"};
@@ -331,6 +349,7 @@ void AndroidApplication::initActivity(JNIEnv *env, jobject baseActivity, jclass 
 		uriLastModified = {env, baseActivity, "uriLastModified", "(Ljava/lang/String;)Ljava/lang/String;"};
 		uriLastModifiedTime = {env, baseActivity, "uriLastModifiedTime", "(Ljava/lang/String;)J"};
 		uriDisplayName = {env, baseActivity, "uriDisplayName", "(Ljava/lang/String;)Ljava/lang/String;"};
+		uriFileType = {env, baseActivity, "uriFileType", "(Ljava/lang/String;)I"};
 		deleteUri = {env, baseActivity, "deleteUri", "(Ljava/lang/String;Z)Z"};
 		if(androidSDK >= 21)
 		{
@@ -349,7 +368,7 @@ void AndroidApplication::initActivity(JNIEnv *env, jobject baseActivity, jclass 
 			{
 				"onContentRectChanged", "(JIIIIII)V",
 				(void*)
-				+[](JNIEnv* env, jobject thiz, jlong windowAddr, jint x, jint y, jint x2, jint y2, jint winWidth, jint winHeight)
+				+[](JNIEnv*, jobject, jlong windowAddr, jint x, jint y, jint x2, jint y2, jint winWidth, jint winHeight)
 				{
 					assumeExpr(windowAddr);
 					auto win = (Window*)windowAddr;
@@ -380,13 +399,13 @@ void AndroidApplication::initActivity(JNIEnv *env, jobject baseActivity, jclass 
 			{
 				"inputDeviceEnumerated", "(JILandroid/view/InputDevice;Ljava/lang/String;IIIIZ)V",
 				(void*)
-				+[](JNIEnv* env, jobject, jlong nUserData, jint devID, jobject jDev, jstring jName, jint src,
+				+[](JNIEnv* env, jobject, jlong nUserData, jint devID, [[maybe_unused]] jobject jDev, jstring jName, jint src,
 					jint kbType, jint jsAxisFlags, jint vendorProductId, jboolean isPowerButton)
 				{
 					ApplicationContext ctx{reinterpret_cast<ANativeActivity*>(nUserData)};
 					auto &app = ctx.application();
 					const char *name = env->GetStringUTFChars(jName, nullptr);
-					auto sysDev = std::make_unique<Input::Device>(std::in_place_type<Input::AndroidInputDevice>, env, jDev, devID, src,
+					auto sysDev = std::make_unique<Input::Device>(std::in_place_type<Input::AndroidInputDevice>, devID, src,
 						name, kbType, std::bit_cast<Input::AxisFlags>(jsAxisFlags), (uint32_t)vendorProductId, (bool)isPowerButton);
 					env->ReleaseStringUTFChars(jName, name);
 					auto devPtr = app.updateAndroidInputDevice(ctx, std::move(sysDev), false);
@@ -407,17 +426,18 @@ void AndroidApplication::initActivity(JNIEnv *env, jobject baseActivity, jclass 
 				(void*)
 				+[](JNIEnv* env, jobject, jlong nUserData, jstring jUri, jstring jDisplayName)
 				{
-					auto &app = *((AndroidApplication*)nUserData);
+					ApplicationContext ctx{reinterpret_cast<ANativeActivity*>(nUserData)};
+					auto &app = ctx.application();
 					auto uri = JNI::StringChars{env, jUri};
 					auto name = JNI::StringChars{env, jDisplayName};
 					log.info("picked URI:{} name:{}", uri.data(), name.data());
-					app.handleDocumentIntentResult(uri, name);
+					app.handleDocumentIntentResult(ctx, uri, name);
 				}
 			},
 			{
 				"uriFileListed", "(JLjava/lang/String;Ljava/lang/String;Z)Z",
 				(void*)
-				+[](JNIEnv* env, jobject thiz, jlong userData, jstring jUri, jstring name, jboolean isDir)
+				+[](JNIEnv* env, jobject, jlong userData, jstring jUri, jstring name, jboolean isDir)
 				{
 					auto &del = *((DirectoryEntryDelegate*)userData);
 					auto type = isDir ? FS::file_type::directory : FS::file_type::regular;
@@ -462,7 +482,7 @@ void AndroidApplication::initActivity(JNIEnv *env, jobject baseActivity, jclass 
 
 JNIEnv* AndroidApplication::thisThreadJniEnv() const
 {
-	auto env = (JNIEnv*)pthread_getspecific(jEnvKey);
+	auto env = (JNIEnv*)pthread_getspecific(jEnvPThreadKey);
 	if(!env) [[unlikely]]
 	{
 		if(Config::DEBUG_BUILD)
@@ -475,7 +495,7 @@ JNIEnv* AndroidApplication::thisThreadJniEnv() const
 			log.error("error attaching JNI thread");
 			return nullptr;
 		}
-		pthread_setspecific(jEnvKey, env);
+		pthread_setspecific(jEnvPThreadKey, env);
 	}
 	return env;
 }
@@ -501,14 +521,7 @@ void AndroidApplication::endIdleByUserActivity(ApplicationContext ctx)
 		// quickly toggle KEEP_SCREEN_ON flag to brighten screen,
 		// waiting about 20ms before toggling it back off triggers the screen to brighten if it was already dim
 		jSetWinFlags(ctx.mainThreadJniEnv(), ctx.baseActivityObject(), AWINDOW_FLAG_KEEP_SCREEN_ON, AWINDOW_FLAG_KEEP_SCREEN_ON);
-		userActivityCallback.runIn(Milliseconds(20), {},
-			[this, ctx]()
-			{
-				if(!keepScreenOn)
-				{
-					jSetWinFlags(ctx.mainThreadJniEnv(), ctx.baseActivityObject(), 0, AWINDOW_FLAG_KEEP_SCREEN_ON);
-				}
-			});
+		userActivityCallback.runIn(Milliseconds(20));
 	}
 }
 
@@ -575,7 +588,7 @@ void AndroidApplication::onWindowFocusChanged(ApplicationContext ctx, int focuse
 		deinitKeyRepeatTimer();
 }
 
-void AndroidApplication::onInputQueueCreated(ApplicationContext ctx, AInputQueue *queue)
+void AndroidApplication::onInputQueueCreated(ApplicationContext, AInputQueue* queue)
 {
 	assert(!inputQueue);
 	inputQueue = queue;
@@ -635,45 +648,42 @@ void AndroidApplication::handleIntent(ApplicationContext ctx)
 	{
 		const char *intentDataPathStr = env->GetStringUTFChars(intentDataPathJStr, nullptr);
 		log.info("got intent with path:{}", intentDataPathStr);
-		onEvent(ctx, InterProcessMessageEvent{intentDataPathStr});
+		onEvent(ctx, DocumentPickerEvent{intentDataPathStr, ctx.fileUriDisplayName(intentDataPathStr)});
 		env->ReleaseStringUTFChars(intentDataPathJStr, intentDataPathStr);
 	}
 }
 
-bool AndroidApplication::openDocumentTreeIntent(JNIEnv *env, jobject baseActivity, SystemDocumentPickerDelegate del)
+bool AndroidApplication::openDocumentTreeIntent(JNIEnv* env, ANativeActivity* nActivity, jobject baseActivity)
 {
-	onSystemDocumentPicker = del;
 	JNI::InstMethod<jboolean(jlong)> jOpenDocumentTree{env, env->GetObjectClass(baseActivity), "openDocumentTree", "(J)Z"};
-	return jOpenDocumentTree(env, baseActivity, (jlong)this);
+	return jOpenDocumentTree(env, baseActivity, (jlong)nActivity);
 }
 
-bool AndroidApplication::openDocumentIntent(JNIEnv *env, jobject baseActivity, SystemDocumentPickerDelegate del)
+bool AndroidApplication::openDocumentIntent(JNIEnv* env, ANativeActivity* nActivity, jobject baseActivity)
 {
-	onSystemDocumentPicker = del;
 	JNI::InstMethod<jboolean(jlong)> jOpenDocument{env, env->GetObjectClass(baseActivity), "openDocument", "(J)Z"};
-	return jOpenDocument(env, baseActivity, (jlong)this);
+	return jOpenDocument(env, baseActivity, (jlong)nActivity);
 }
 
-bool AndroidApplication::createDocumentIntent(JNIEnv *env, jobject baseActivity, SystemDocumentPickerDelegate del)
+bool AndroidApplication::createDocumentIntent(JNIEnv* env, ANativeActivity* nActivity, jobject baseActivity)
 {
-	onSystemDocumentPicker = del;
 	JNI::InstMethod<jboolean(jlong)> jCreateDocument{env, env->GetObjectClass(baseActivity), "createDocument", "(J)Z"};
-	return jCreateDocument(env, baseActivity, (jlong)this);
+	return jCreateDocument(env, baseActivity, (jlong)nActivity);
 }
 
-void AndroidApplication::handleDocumentIntentResult(const char *uri, const char *name)
+void AndroidApplication::handleDocumentIntentResult(ApplicationContext ctx, const char *uri, const char *name)
 {
 	if(isRunning())
 	{
-		std::exchange(onSystemDocumentPicker, {})(uri, name);
+		onEvent(ctx, DocumentPickerEvent{uri, name});
 	}
 	else
 	{
 		// wait until after app resumes before handling result
 		addOnResume(
-			[uriCopy = strdup(uri), nameCopy = strdup(name)](ApplicationContext ctx, bool focused)
+			[uriCopy = strdup(uri), nameCopy = strdup(name)](ApplicationContext ctx, [[maybe_unused]] bool focused)
 			{
-				std::exchange(ctx.application().onSystemDocumentPicker, {})(uriCopy, nameCopy);
+				ctx.application().onEvent(ctx, DocumentPickerEvent{uriCopy, nameCopy});
 				::free(nameCopy);
 				::free(uriCopy);
 				return false;
@@ -835,7 +845,7 @@ static void setNativeActivityCallbacks(ANativeActivity *nActivity)
 
 }
 
-CLINK void LVISIBLE ANativeActivity_onCreate(ANativeActivity *nActivity, void* savedState, size_t savedStateSize)
+CLINK void LVISIBLE ANativeActivity_onCreate(ANativeActivity* nActivity, [[maybe_unused]] void* savedState, [[maybe_unused]] size_t savedStateSize)
 {
 	using namespace IG;
 	if(Config::DEBUG_BUILD)

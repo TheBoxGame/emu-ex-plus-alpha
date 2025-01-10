@@ -29,6 +29,7 @@
 #include <pce_fast/vdc.h>
 #include <mednafen-emuex/MDFNUtils.hh>
 #include <mednafen-emuex/ArchiveVFS.hh>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
@@ -210,7 +211,7 @@ void PceSystem::reset(EmuApp &, ResetMode mode)
 }
 
 size_t PceSystem::stateSize() { return stateSizeMDFN(); }
-void PceSystem::readState(EmuApp &app, std::span<uint8_t> buff) { readStateMDFN(app, buff); }
+void PceSystem::readState(EmuApp&, std::span<uint8_t> buff) { readStateMDFN(buff); }
 size_t PceSystem::writeState(std::span<uint8_t> buff, SaveStateFlags flags) { return writeStateMDFN(buff, flags); }
 
 double PceSystem::videoAspectRatioScale() const
@@ -266,7 +267,7 @@ static void renderMultiresOutput(EmulateSpecStruct spec, IG::PixmapView srcPix, 
 					bug_unreachable("width == %d", width);
 				case 256:
 				{
-					for(auto w : IG::iotaCount(256))
+					for([[maybe_unused]] auto w : IG::iotaCount(256))
 					{
 						*destPixAddr++ = *srcPixAddr;
 						*destPixAddr++ = *srcPixAddr;
@@ -277,7 +278,7 @@ static void renderMultiresOutput(EmulateSpecStruct spec, IG::PixmapView srcPix, 
 				}
 				case 341:
 				{
-					for(auto w : IG::iotaCount(340))
+					for([[maybe_unused]] auto w : IG::iotaCount(340))
 					{
 						*destPixAddr++ = *srcPixAddr;
 						*destPixAddr++ = *srcPixAddr;
@@ -291,7 +292,7 @@ static void renderMultiresOutput(EmulateSpecStruct spec, IG::PixmapView srcPix, 
 				}
 				case 512:
 				{
-					for(auto w : IG::iotaCount(512))
+					for([[maybe_unused]] auto w : IG::iotaCount(512))
 					{
 						*destPixAddr++ = *srcPixAddr;
 						*destPixAddr++ = *srcPixAddr++;
@@ -314,7 +315,7 @@ static void renderMultiresOutput(EmulateSpecStruct spec, IG::PixmapView srcPix, 
 					bug_unreachable("width == %d", width);
 				case 256:
 				{
-					for(auto w : IG::iotaCount(256))
+					for([[maybe_unused]] auto w : IG::iotaCount(256))
 					{
 						*destPixAddr++ = *srcPixAddr;
 						*destPixAddr++ = *srcPixAddr++;
@@ -380,7 +381,7 @@ void MDFND_commitVideoFrame(EmulateSpecStruct *espec)
 		{pixWidth, pixHeight});
 	if(multiResOutputWidth)
 	{
-		if(srcPix.format() == IG::PIXEL_RGB565)
+		if(srcPix.format() == IG::PixelFmtRGB565)
 			renderMultiresOutput<uint16_t>(spec, srcPix, multiResOutputWidth);
 		else
 			renderMultiresOutput<uint32_t>(spec, srcPix, multiResOutputWidth);

@@ -26,7 +26,6 @@
 #include <emuframework/EmuTiming.hh>
 #include <emuframework/VController.hh>
 #include <emuframework/EmuInput.hh>
-#include <optional>
 #include <string>
 #include <string_view>
 
@@ -58,6 +57,14 @@ class EmuVideo;
 class EmuApp;
 struct EmuFrameTimeInfo;
 class VControllerKeyboard;
+class Cheat;
+class CheatCode;
+
+struct CheatCodeDesc
+{
+	const char* str{};
+	unsigned flags{};
+};
 
 struct AspectRatioInfo
 {
@@ -186,6 +193,7 @@ public:
 	static bool inputHasKeyboard;
 	static bool hasBundledGames;
 	static bool hasPALVideoSystem;
+	static bool canRenderRGB565;
 	static bool canRenderRGBA8888;
 	static bool hasResetModes;
 	static bool handlesArchiveFiles;
@@ -210,7 +218,7 @@ public:
 	size_t stateSize();
 	void readState(EmuApp &, std::span<uint8_t> buff);
 	size_t writeState(std::span<uint8_t> buff, SaveStateFlags = {});
-	bool readConfig(ConfigType, MapIO &io, unsigned key, size_t readSize);
+	bool readConfig(ConfigType, MapIO &io, unsigned key);
 	void writeConfig(ConfigType, FileIO &);
 	void reset(EmuApp &, ResetMode mode);
 	void clearInputBuffers(EmuInputView &view);
@@ -234,6 +242,7 @@ public:
 	WSize multiresVideoBaseSize() const;
 	double videoAspectRatioScale() const;
 	bool onVideoRenderFormatChange(EmuVideo &, PixelFormat);
+	static bool canRenderMultipleFormats() {return canRenderRGBA8888 && canRenderRGB565;}
 	void loadBackupMemory(EmuApp &);
 	void onFlushBackupMemory(EmuApp &, BackupMemoryDirtyFlags);
 	WallClockTimePoint backupMemoryLastWriteTime(const EmuApp &) const;
@@ -246,6 +255,17 @@ public:
 	FS::FileString contentDisplayNameForPath(CStringView path) const;
 	IG::Rotation contentRotation() const;
 	void addThreadGroupIds(std::vector<ThreadId> &) const;
+	Cheat* newCheat(EmuApp&, const char* name, CheatCodeDesc);
+	bool setCheatName(Cheat&, const char* name);
+	std::string_view cheatName(const Cheat&) const;
+	void setCheatEnabled(Cheat&, bool on);
+	bool isCheatEnabled(const Cheat&) const;
+	bool addCheatCode(EmuApp&, Cheat*&, CheatCodeDesc);
+	bool modifyCheatCode(EmuApp&, Cheat&, CheatCode&, CheatCodeDesc);
+	Cheat* removeCheatCode(Cheat&, CheatCode&);
+	bool removeCheat(Cheat&);
+	void forEachCheat(DelegateFunc<bool(Cheat&, std::string_view)>);
+	void forEachCheatCode(Cheat&, DelegateFunc<bool(CheatCode&, std::string_view)>);
 
 	ApplicationContext appContext() const { return appCtx; }
 	bool isActive() const { return state == State::ACTIVE; }
@@ -269,7 +289,6 @@ public:
 	FS::PathString contentDirectory(std::string_view name) const;
 	FS::PathString contentFilePath(std::string_view ext) const;
 	const auto &contentLocation() const { return contentLocation_; }
-	const char *contentLocationPtr() { return contentLocation_.data(); }
 	FS::FileString contentNameExt(std::string_view ext) const
 	{
 		FS::FileString name{contentName_};

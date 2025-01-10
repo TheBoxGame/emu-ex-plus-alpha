@@ -86,14 +86,14 @@ FrameRateTestApplication::FrameRateTestApplication(IG::ApplicationInitParams ini
 			setPickerHandlers(win);
 
 			ctx.addOnResume(
-				[this, &win](IG::ApplicationContext, bool focused)
+				[this, &win](IG::ApplicationContext, [[maybe_unused]] bool focused)
 				{
 					windowData(win).picker.prepareDraw();
 					return true;
 				});
 
 			ctx.addOnExit(
-				[this, &win](IG::ApplicationContext ctx, bool backgrounded)
+				[this, &win](IG::ApplicationContext, [[maybe_unused]] bool backgrounded)
 				{
 					if(backgrounded)
 					{
@@ -137,18 +137,18 @@ void FrameRateTestApplication::updateWindowSurface(Window &win, Window::SurfaceC
 	renderer.task().updateDrawableForSurfaceChange(win, change);
 }
 
-void FrameRateTestApplication::setPickerHandlers(IG::Window &win)
+void FrameRateTestApplication::setPickerHandlers(IG::Window& win)
 {
-	win.onEvent = [this, &task = renderer.task()](Window &win, WindowEvent winEvent)
+	win.onEvent = [this, &task = renderer.task()](Window& win, const WindowEvent& winEvent)
 	{
-		return visit(overloaded
+		return winEvent.visit(overloaded
 		{
-			[&](WindowSurfaceChangeEvent &e)
+			[&](const WindowSurfaceChangeEvent& e)
 			{
 				updateWindowSurface(win, e.change);
 				return true;
 			},
-			[&](DrawEvent &e)
+			[&](const DrawEvent& e)
 			{
 				return task.draw(win, e.params, {}, [](Window &win, Gfx::RendererCommands &cmds)
 				{
@@ -161,7 +161,7 @@ void FrameRateTestApplication::setPickerHandlers(IG::Window &win)
 					cmds.present();
 				});
 			},
-			[&](Input::Event &e)
+			[&](const Input::Event& e)
 			{
 				if(e.keyEvent() && e.keyEvent()->pushed(Input::DefaultKey::CANCEL) && !e.keyEvent()->repeated())
 				{
@@ -170,8 +170,8 @@ void FrameRateTestApplication::setPickerHandlers(IG::Window &win)
 				}
 				return windowData(win).picker.inputEvent(e);
 			},
-			[](auto &){ return false; }
-		}, winEvent);
+			[](auto&){ return false; }
+		});
 	};
 }
 
@@ -207,16 +207,16 @@ void FrameRateTestApplication::setActiveTestHandlers(IG::Window &win)
 			return true;
 		}
 	});
-	win.onEvent = [this, &task = renderer.task()](Window &win, WindowEvent winEvent)
+	win.onEvent = [this, &task = renderer.task()](Window& win, const WindowEvent& winEvent)
 	{
-		return visit(overloaded
+		return winEvent.visit(overloaded
 		{
-			[&](WindowSurfaceChangeEvent &e)
+			[&](const WindowSurfaceChangeEvent& e)
 			{
 				updateWindowSurface(win, e.change);
 				return true;
 			},
-			[&](DrawEvent &e)
+			[&](const DrawEvent& e)
 			{
 				auto xIndent = viewManager.tableXIndentPx;
 				return task.draw(win, e.params, {}, [xIndent](IG::Window &win, Gfx::RendererCommands &cmds)
@@ -230,12 +230,12 @@ void FrameRateTestApplication::setActiveTestHandlers(IG::Window &win)
 					cmds.present(activeTest->presentTime);
 				});
 			},
-			[&](Input::Event &e)
+			[&](const Input::Event& e)
 			{
 				auto &activeTest = windowData(win).activeTest;
-				return visit(overloaded
+				return e.visit(overloaded
 				{
-					[&](const Input::MotionEvent &motionEv)
+					[&](const Input::MotionEvent& motionEv)
 					{
 						if(motionEv.pushed() && Config::envIsIOS)
 						{
@@ -245,7 +245,7 @@ void FrameRateTestApplication::setActiveTestHandlers(IG::Window &win)
 						}
 						return false;
 					},
-					[&](const Input::KeyEvent &keyEv)
+					[&](const Input::KeyEvent& keyEv)
 					{
 						if(keyEv.pushed(Input::DefaultKey::CANCEL))
 						{
@@ -261,10 +261,10 @@ void FrameRateTestApplication::setActiveTestHandlers(IG::Window &win)
 						}
 						return false;
 					}
-				}, e);
+				});
 			},
-			[](auto &){ return false; }
-		}, winEvent);
+			[](auto&){ return false; }
+		});
 	};
 }
 
@@ -281,7 +281,7 @@ void FrameRateTestApplication::placeElements(const IG::Window &win)
 	}
 	else
 	{
-		activeTest->place(renderer, win.contentBounds(), winData.testRect);
+		activeTest->place(win.contentBounds(), winData.testRect);
 	}
 }
 
@@ -291,7 +291,7 @@ void FrameRateTestApplication::finishTest(Window &win, SteadyClockTimePoint fram
 	auto &activeTest = windowData(win).activeTest;
 	if(activeTest)
 	{
-		activeTest->finish(renderer.task(), frameTime);
+		activeTest->finish(frameTime);
 	}
 	renderer.mainTask.awaitPending();
 	activeTest.reset();
@@ -332,7 +332,6 @@ TestFramework *FrameRateTestApplication::startTest(IG::Window &win, const TestPa
 	initCPUFreqStatus();
 	initCPULoadStatus();
 	placeElements(win);
-	auto &winData = windowData(win);
 	setActiveTestHandlers(win);
 	return activeTest.get();
 }

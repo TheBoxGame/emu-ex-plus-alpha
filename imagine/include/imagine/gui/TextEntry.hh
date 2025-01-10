@@ -35,10 +35,10 @@ public:
 	void setAcceptingInput(bool on);
 	bool isAcceptingInput() const;
 	bool inputEvent(View &parentView, const Input::Event &);
-	void prepareDraw(Gfx::Renderer &r);
-	void draw(Gfx::RendererCommands &__restrict__);
-	void place(Gfx::Renderer &r);
-	void place(Gfx::Renderer &r, WRect rect);
+	void prepareDraw();
+	void draw(Gfx::RendererCommands &__restrict__) const;
+	void place();
+	void place(WRect rect);
 	const char *textStr() const;
 	WRect bgRect() const;
 
@@ -62,9 +62,9 @@ public:
 		Gfx::TextureSpan closeRes, OnTextDelegate onText, Gfx::GlyphTextureSet *face = {}):
 		CollectTextInputView(attach, msgText, "", closeRes, onText, face) {}
 	void place() override;
-	bool inputEvent(const Input::Event &) override;
+	bool inputEvent(const Input::Event&, ViewInputEventParams p = {}) override;
 	void prepareDraw() override;
-	void draw(Gfx::RendererCommands &__restrict__) override;
+	void draw(Gfx::RendererCommands &__restrict__, ViewDrawParams p = {}) const override;
 
 protected:
 	struct CancelButton
@@ -74,10 +74,10 @@ protected:
 		Gfx::TextureSpan texture{};
 	};
 	// TODO: cancel button doesn't work yet due to popup window not forwarding touch events to main window
-	IG_UseMemberIf(!Config::envIsAndroid, CancelButton, cancelButton);
+	ConditionalMember<!Config::envIsAndroid, CancelButton> cancelButton;
 	Gfx::Text message;
 	[[no_unique_address]] Input::TextField textField;
-	IG_UseMemberIf(!Config::Input::SYSTEM_COLLECTS_TEXT, TextEntry, textEntry);
+	ConditionalMember<!Config::Input::SYSTEM_COLLECTS_TEXT, TextEntry> textEntry;
 	OnTextDelegate onTextD;
 };
 

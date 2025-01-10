@@ -16,7 +16,6 @@
 #define LOGTAG "GLPixmapBufferTexture"
 #include <imagine/gfx/Renderer.hh>
 #include <imagine/gfx/PixmapBufferTexture.hh>
-#include <imagine/base/Error.hh>
 #include <imagine/util/ScopeGuard.hh>
 #include <imagine/util/utility.h>
 #include <imagine/util/math.hh>
@@ -65,7 +64,7 @@ namespace IG::Gfx
 
 PixmapBufferTexture::PixmapBufferTexture(RendererTask &r, TextureConfig config, TextureBufferMode mode, bool singleBuffer)
 {
-	mode = r.renderer().makeValidTextureBufferMode(mode);
+	mode = r.renderer().evalTextureBufferMode(mode);
 	try
 	{
 		if(mode == TextureBufferMode::SYSTEM_MEMORY)
@@ -135,7 +134,7 @@ void GLPixmapBufferTexture::initWithSurfaceTexture(RendererTask &r, TextureConfi
 }
 #endif
 
-ErrorCode PixmapBufferTexture::setFormat(PixmapDesc desc, ColorSpace colorSpace, TextureSamplerConfig samplerConf)
+bool PixmapBufferTexture::setFormat(PixmapDesc desc, ColorSpace colorSpace, TextureSamplerConfig samplerConf)
 {
 	if(Config::DEBUG_BUILD && pixmapDesc() == desc)
 		logWarn("resizing with same dimensions %dx%d, should optimize caller code", desc.w(), desc.h());
@@ -231,7 +230,7 @@ bool PixmapBufferTexture::isExternal() const
 }
 
 template<class Impl, class BufferInfo>
-ErrorCode GLTextureStorage<Impl, BufferInfo>::setFormat(PixmapDesc desc, ColorSpace colorSpace, TextureSamplerConfig samplerConf)
+bool GLTextureStorage<Impl, BufferInfo>::setFormat(PixmapDesc desc, ColorSpace colorSpace, TextureSamplerConfig samplerConf)
 {
 	static_cast<Impl*>(this)->initBuffer(desc, isSingleBuffered());
 	return Texture::setFormat(desc, 1, colorSpace, samplerConf);
@@ -356,7 +355,7 @@ void GLPixelBufferStorage::initBuffer(PixmapDesc desc, bool singleBuffer)
 	}
 	else [[unlikely]]
 	{
-		throw Error{ENOMEM};
+		throw std::runtime_error("Error creating pixel buffer");
 	}
 }
 
@@ -430,7 +429,7 @@ std::vector<TextureBufferModeDesc> Renderer::textureBufferModes()
 	return methodDesc;
 }
 
-TextureBufferMode Renderer::makeValidTextureBufferMode(TextureBufferMode mode)
+TextureBufferMode Renderer::evalTextureBufferMode(TextureBufferMode mode)
 {
 	switch(mode)
 	{
@@ -449,14 +448,21 @@ TextureBufferMode Renderer::makeValidTextureBufferMode(TextureBufferMode mode)
 		case TextureBufferMode::SYSTEM_MEMORY:
 			return TextureBufferMode::SYSTEM_MEMORY;
 		case TextureBufferMode::PBO:
-			return hasPersistentBufferMapping(*this) ? TextureBufferMode::PBO : makeValidTextureBufferMode();
+			return hasPersistentBufferMapping(*this) ? TextureBufferMode::PBO : evalTextureBufferMode();
 		#ifdef __ANDROID__
 		case TextureBufferMode::ANDROID_HARDWARE_BUFFER:
-			return hasHardwareBuffer(*this) ? TextureBufferMode::ANDROID_HARDWARE_BUFFER : makeValidTextureBufferMode();
+			return hasHardwareBuffer(*this) ? TextureBufferMode::ANDROID_HARDWARE_BUFFER : evalTextureBufferMode();
 		case TextureBufferMode::ANDROID_SURFACE_TEXTURE:
-			return hasSurfaceTexture(*this) ? TextureBufferMode::ANDROID_SURFACE_TEXTURE : makeValidTextureBufferMode();
+			return hasSurfaceTexture(*this) ? TextureBufferMode::ANDROID_SURFACE_TEXTURE : evalTextureBufferMode();
 		#endif
 	}
+}
+
+TextureBufferMode Renderer::validateTextureBufferMode(TextureBufferMode mode)
+{
+	if(mode == Gfx::TextureBufferMode::DEFAULT || evalTextureBufferMode(mode) == mode)
+		return mode;
+	return Gfx::TextureBufferMode::DEFAULT;
 }
 
 }

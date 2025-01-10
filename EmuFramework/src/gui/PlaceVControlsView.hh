@@ -29,14 +29,14 @@ class VControllerElement;
 
 using namespace IG;
 
-class PlaceVControlsView final: public View, public EmuAppHelper<PlaceVControlsView>
+class PlaceVControlsView final: public View, public EmuAppHelper
 {
 public:
 	PlaceVControlsView(ViewAttachParams attach, VController &vController);
 	~PlaceVControlsView() final;
 	void place() final;
-	bool inputEvent(const Input::Event &e) final;
-	void draw(Gfx::RendererCommands &__restrict__ cmds) final;
+	bool inputEvent(const Input::Event&, ViewInputEventParams p = {}) final;
+	void draw(Gfx::RendererCommands &__restrict__ cmds, ViewDrawParams p = {}) const final;
 	void onShow() final;
 
 private:

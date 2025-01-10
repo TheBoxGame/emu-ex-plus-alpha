@@ -13,7 +13,7 @@
 	You should have received a copy of the GNU General Public License
 	along with EmuFramework.  If not, see <http://www.gnu.org/licenses/> */
 
-#include "EmuOptions.hh"
+#include <emuframework/EmuOptions.hh>
 #include <emuframework/EmuSystem.hh>
 #include <emuframework/EmuApp.hh>
 #include <emuframework/MainMenuView.hh>
@@ -29,61 +29,39 @@
 #include <imagine/io/FileIO.hh>
 #include <imagine/io/MapIO.hh>
 #include <imagine/util/format.hh>
+#include <imagine/logger/logger.h>
 
 namespace EmuEx
 {
 
 constexpr SystemLogger log{"App"};
 
-void EmuApp::initOptions(IG::ApplicationContext ctx)
+void EmuApp::initOptions([[maybe_unused]] IG::ApplicationContext ctx)
 {
 	#ifdef CONFIG_OS_IOS
 	if(ctx.deviceIsIPad())
-		defaultFontSize = 5000;
+		fontSize.resetDefault(5000);
 	#endif
 
 	#ifdef __ANDROID__
 	auto androidSdk = ctx.androidSDK();
-	if(ctx.hasHardwareNavButtons())
+	if(!ctx.hasHardwareNavButtons() && androidSdk >= 19)
 	{
-		optionLowProfileOSNav.isConst = 1;
-		optionHideOSNav.isConst = 1;
-	}
-	else
-	{
-		if(androidSdk >= 19)
-			optionHideOSNav.initDefault(1);
+		hidesOSNav.resetDefault(InEmuTristate::InEmu);
 	}
 	if(androidSdk >= 11)
 	{
-		optionNotificationIcon.initDefault(false);
-		if(androidSdk >= 17)
-			optionNotificationIcon.isConst = true;
+		showsNotificationIcon.resetDefault(false);
 	}
-	if(androidSdk < 17)
+	if(androidSdk >= 17)
 	{
-		optionShowOnSecondScreen.isConst = true;
-	}
-	else
-	{
-		optionShowBluetoothScan.initDefault(0);
+		showsBluetoothScan.resetDefault(false);
 	}
 	if(androidSdk < 27) // use safer value for devices defaulting to OpenSL ES
 	{
-		audio().soundBuffers = audio().defaultSoundBuffers = 4;
+		audio.soundBuffers = audio.defaultSoundBuffers = 4;
 	}
 	#endif
-
-	if(!EmuApp::hasIcon)
-	{
-		optionNotificationIcon.initDefault(false);
-		optionNotificationIcon.isConst = true;
-	}
-}
-
-bool isValidFontSize(int16_t s)
-{
-	return optionIsValidWithMinMax<2000, 10000, uint16_t>(s);
 }
 
 void EmuApp::applyFontSize(Window &win)
@@ -96,64 +74,49 @@ void EmuApp::applyFontSize(Window &win)
 
 IG::FontSettings EmuApp::fontSettings(Window &win) const
 {
-	float size = optionFontSize / 1000.f;
+	float size = fontSize / 1000.f;
 	return {win.heightScaledMMInPixels(size)};
-}
-
-void EmuApp::setFrameInterval(int val)
-{
-	log.info("set frame interval:{}", val);
-	optionFrameInterval = val;
-};
-
-int EmuApp::frameInterval() const
-{
-	return optionFrameInterval;
 }
 
 IG::PixelFormat EmuApp::videoEffectPixelFormat() const
 {
-	if(optionImageEffectPixelFormat)
-		return (IG::PixelFormatID)optionImageEffectPixelFormat.val;
+	if(imageEffectPixelFormat.value() != PixelFormatId::Unset)
+		return imageEffectPixelFormat.value();
 	return windowPixelFormat();
 }
 
-bool EmuApp::setVideoZoom(uint8_t val)
+bool EmuApp::setContentScale(uint8_t val)
 {
-	if(!optionImageZoom.isValidVal(val))
+	if(!videoLayer.scale.set(val))
 		return false;
-	optionImageZoom = val;
-	log.info("set video zoom:{}", int(optionImageZoom));
-	emuVideoLayer.setZoom(val);
+	log.info("set content scale:{}", val);
 	viewController().placeEmuViews();
 	viewController().postDrawToEmuWindows();
 	return true;
 }
 
-bool EmuApp::setViewportZoom(uint8_t val)
+bool EmuApp::setMenuScale(int8_t val)
 {
-	if(!optionViewportZoom.isValidVal(val))
+	if(!menuScale.set(val))
 		return false;
-	optionViewportZoom = val;
-	log.info("set viewport zoom:{}", int(optionViewportZoom));
-	auto &win = appContext().mainWindow();
-	viewController().updateMainWindowViewport(win, makeViewport(win), renderer.task());
+	log.info("set menu scale:{}", menuScale.value());
+	viewController().placeElements();
 	viewController().postDrawToEmuWindows();
 	return true;
 }
 
 void EmuApp::setContentRotation(IG::Rotation r)
 {
-	contentRotation_ = r;
+	contentRotation = r;
 	updateContentRotation();
 }
 
 void EmuApp::updateVideoContentRotation()
 {
-	if(contentRotation_ == Rotation::ANY)
-		emuVideoLayer.setRotation(system().contentRotation());
+	if(contentRotation == Rotation::ANY)
+		videoLayer.setRotation(system().contentRotation());
 	else
-		emuVideoLayer.setRotation(contentRotation_);
+		videoLayer.setRotation(contentRotation);
 }
 
 void EmuApp::updateContentRotation()
@@ -176,9 +139,9 @@ bool EmuApp::setVideoAspectRatio(float ratio)
 		return false;
 	log.info("set aspect ratio:{:g}", ratio);
 	if(viewController().emuWindow().isLandscape())
-		emuVideoLayer.landscapeAspectRatio = ratio;
+		videoLayer.landscapeAspectRatio = ratio;
 	else
-		emuVideoLayer.portraitAspectRatio = ratio;
+		videoLayer.portraitAspectRatio = ratio;
 	viewController().placeEmuViews();
 	viewController().postDrawToEmuWindows();
 	return true;
@@ -186,7 +149,7 @@ bool EmuApp::setVideoAspectRatio(float ratio)
 
 float EmuApp::videoAspectRatio() const
 {
-	return viewController().emuWindow().isLandscape() ? emuVideoLayer.landscapeAspectRatio : emuVideoLayer.portraitAspectRatio;
+	return viewController().emuWindow().isLandscape() ? videoLayer.landscapeAspectRatio : videoLayer.portraitAspectRatio;
 }
 
 float EmuApp::defaultVideoAspectRatio() const
@@ -196,57 +159,57 @@ float EmuApp::defaultVideoAspectRatio() const
 
 void EmuApp::setShowsTitleBar(bool on)
 {
-	optionTitleBar = on;
-	viewController().showNavView(optionTitleBar);
+	showsTitleBar = on;
+	viewController().showNavView(on);
 	viewController().placeElements();
 }
 
 void EmuApp::setIdleDisplayPowerSave(bool on)
 {
-	idleDisplayPowerSave_ = on;
-	appContext().setIdleDisplayPowerSave(idleDisplayPowerSave_);
+	idleDisplayPowerSave = on;
+	appContext().setIdleDisplayPowerSave(on);
 }
 
-void EmuApp::setLowProfileOSNavMode(Tristate mode)
+void EmuApp::setLowProfileOSNavMode(InEmuTristate mode)
 {
-	optionLowProfileOSNav = (uint8_t)mode;
+	lowProfileOSNav = mode;
 	applyOSNavStyle(appContext(), false);
 }
 
-void EmuApp::setHideOSNavMode(Tristate mode)
+void EmuApp::setHideOSNavMode(InEmuTristate mode)
 {
-	optionHideOSNav = (uint8_t)mode;
+	hidesOSNav = mode;
 	applyOSNavStyle(appContext(), false);
 }
 
-void EmuApp::setHideStatusBarMode(Tristate mode)
+void EmuApp::setHideStatusBarMode(InEmuTristate mode)
 {
-	optionHideStatusBar = mode;
+	hidesStatusBar = mode;
 	applyOSNavStyle(appContext(), false);
 }
 
 void EmuApp::setEmuOrientation(Orientations o)
 {
-	optionEmuOrientation = o;
+	emuOrientation = o;
 	log.info("set game orientation:{}", asString(o).data());
 }
 
 void EmuApp::setMenuOrientation(Orientations o)
 {
-	optionMenuOrientation = o;
+	menuOrientation = o;
 	renderer.setWindowValidOrientations(appContext().mainWindow(), o);
 	log.info("set menu orientation:{}", asString(o).data());
 }
 
 void EmuApp::setShowsBundledGames(bool on)
 {
-	optionShowBundledGames = on;
+	showsBundledGames = on;
 	viewController().mainMenu().reloadItems();
 }
 
 void EmuApp::setShowsBluetoothScanItems(bool on)
 {
-	optionShowBluetoothScan = on;
+	showsBluetoothScan = on;
 	viewController().mainMenu().reloadItems();
 }
 

@@ -110,14 +110,14 @@ void SoundEmuEx::setEmuAudio(EmuEx::EmuAudio *audio)
 	audioQueue->onFragmentEnqueued =
 	[this, audio](AudioQueue &queue, uInt32 fragFrames)
 	{
-		const uint32_t samplesPerFrame = 1; //audioQueue->isStereo() ? 2 : 1;
-		const uint32_t fragSamples = fragFrames * samplesPerFrame;
-		uint32_t wroteFrames = 0;
+		const int samplesPerFrame = 1; //audioQueue->isStereo() ? 2 : 1;
+		[[maybe_unused]] const int fragSamples = fragFrames * samplesPerFrame;
+		[[maybe_unused]] int wroteFrames = 0;
 		//logDMsg("%d fragments of %d size ready", audioQueue->size(), fragFrames);
 		while(queue.size())
 		{
 			float buffF[512];
-			assert(fragSamples <= std::size(buffF));
+			assert(fragSamples <= std::ssize(buffF));
 			myResampler->fillFragment(buffF, fragFrames);
 			if(audio)
 			{
